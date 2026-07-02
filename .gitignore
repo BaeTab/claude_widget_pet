@@ -1,0 +1,28 @@
+# ---- Build output ----
+[Bb]in/
+[Oo]bj/
+publish/
+installer_output/
+
+# ---- Visual Studio ----
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ---- Rider / VS Code ----
+.idea/
+.vscode/
+
+# ---- OS ----
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- Signing / secrets (never commit) ----
+keystore.properties
+signing.properties
+*.jks
+*.keystore
+*.pfx

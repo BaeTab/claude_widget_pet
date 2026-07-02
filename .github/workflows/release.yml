@@ -1,0 +1,123 @@
+# Claude Widget - Release 워크플로
+#
+# 트리거:
+#   - "v*" 형태의 태그(push) — 예: v1.2.0
+#   - 수동 실행(workflow_dispatch) — 태그 없이 임시 릴리스가 필요할 때
+#
+# 동작 요약:
+#   1) .NET 8 SDK로 win-x64 self-contained 빌드를 publish/ 폴더에 생성
+#   2) Inno Setup(ISCC)으로 setup.iss를 컴파일해 installer_output/ClaudeWidget_Setup_<version>.exe 생성
+#   3) GitHub Release를 생성/갱신하고 설치 파일을 자산(asset)으로 첨부
+#
+# 주의: 앱 내 자동 업데이터가 release의 tag_name(vX.Y.Z)과 자산 파일명
+#       (ClaudeWidget_Setup_<version>.exe)을 그대로 사용하므로, 이 두 이름은
+#       반드시 태그에서 파생된 버전과 정확히 일치해야 한다.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "수동 실행 시 사용할 버전 (예: 1.2.0, v 접두사 제외). 태그로 트리거된 경우에는 무시됨."
+        required: false
+        type: string
+
+# GitHub Release 생성/자산 업로드를 위해 필요
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build installer and publish GitHub Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # 태그 push(refs/tags/vX.Y.Z)면 태그명에서, workflow_dispatch 수동 실행이면
+      # 입력값(version) 또는 선택된 ref에서 버전을 뽑아낸다. 항상 "v" 접두사를 제거한
+      # 순수 semver(x.y.z)와, 릴리스에 쓸 "vX.Y.Z" 태그명을 함께 출력한다.
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          set -e
+
+          RAW_REF="${GITHUB_REF_NAME}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            RAW_REF="${{ inputs.version }}"
+          fi
+
+          if [ -z "$RAW_REF" ]; then
+            echo "::error::버전을 판별할 수 없습니다. 태그(v*)로 실행하거나 workflow_dispatch의 version 입력값을 채워주세요."
+            exit 1
+          fi
+
+          VERSION="${RAW_REF#v}"
+          TAG_NAME="v${VERSION}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "파생된 버전: ${VERSION} (태그: ${TAG_NAME})"
+
+      - name: dotnet publish (win-x64, self-contained)
+        shell: bash
+        run: |
+          dotnet publish Claude_Widget/Claude_Widget.csproj \
+            -c Release \
+            -r win-x64 \
+            --self-contained true \
+            -o publish
+
+      - name: Install Inno Setup (Chocolatey)
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      # choco가 설치한 ISCC가 PATH 상에 있으면 그대로 사용하고, 없으면 기본 설치
+      # 경로(Program Files (x86)\Inno Setup 6\ISCC.exe)로 폴백한다.
+      # /DMyAppVersion=<version>으로 setup.iss의 #define MyAppVersion 을 덮어써서
+      # OutputBaseFilename(ClaudeWidget_Setup_{#MyAppVersion})이 태그 버전과 일치하게 만든다.
+      - name: Compile installer with Inno Setup (ISCC)
+        shell: bash
+        run: |
+          set -e
+
+          ISCC_BIN="ISCC"
+          if ! command -v ISCC >/dev/null 2>&1; then
+            ISCC_BIN="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          fi
+
+          "$ISCC_BIN" "/DMyAppVersion=${{ steps.version.outputs.version }}" setup.iss
+
+      - name: Verify installer output
+        shell: bash
+        run: |
+          set -e
+          FILE="installer_output/ClaudeWidget_Setup_${{ steps.version.outputs.version }}.exe"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::예상한 설치 파일이 없습니다: $FILE"
+            ls -la installer_output || true
+            exit 1
+          fi
+          echo "설치 파일 확인됨: $FILE"
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Claude Widget ${{ steps.version.outputs.tag_name }}
+          generate_release_notes: true
+          files: installer_output/ClaudeWidget_Setup_${{ steps.version.outputs.version }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

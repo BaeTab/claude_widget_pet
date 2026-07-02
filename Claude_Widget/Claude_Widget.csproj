@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is enabled only for System.Windows.Forms.NotifyIcon (system tray). -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AssemblyName>ClaudeWidget</AssemblyName>
+    <RootNamespace>Claude_Widget</RootNamespace>
+
+    <!-- Version drives both the assembly and the in-app auto-updater's comparison.
+         Bump this (and setup.iss MyAppVersion) for every release. -->
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+
+    <Product>Claude Widget</Product>
+    <Company>BaeTab</Company>
+    <Authors>BaeTab</Authors>
+    <Description>Claude Code 실행을 감지해 함께 코딩하는 데스크톱 펫 위젯</Description>
+    <RepositoryUrl>https://github.com/BaeTab/claude_widget_pet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Packed as a WPF resource so the tray/window can load it at runtime via pack URI. -->
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <!--
+    Auto-publish on Release build.
+    - Fires only on Release, skips VS design-time rebuilds.
+    - Uses an explicit AutoPublishHasRun flag to break recursion: when this target
+      spawns `dotnet publish`, the inner Build re-enters this target with the flag
+      set and the condition stops it.
+    - Output lands in ..\publish (same folder setup.iss consumes).
+  -->
+  <Target Name="AutoPublishOnReleaseBuild"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true' and '$(AutoPublishHasRun)' != 'true'">
+    <Message Importance="high" Text="=== Auto-publishing Release build to $(MSBuildProjectDirectory)\..\publish ===" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot; -c Release -r win-x64 --self-contained true -o &quot;$(MSBuildProjectDirectory)\..\publish&quot; -p:AutoPublishHasRun=true --nologo"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
+</Project>
