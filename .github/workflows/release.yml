@@ -88,17 +88,19 @@ jobs:
       # 경로(Program Files (x86)\Inno Setup 6\ISCC.exe)로 폴백한다.
       # /DMyAppVersion=<version>으로 setup.iss의 #define MyAppVersion 을 덮어써서
       # OutputBaseFilename(ClaudeWidget_Setup_{#MyAppVersion})이 태그 버전과 일치하게 만든다.
+      # PowerShell 사용: bash(MSYS)는 "/D..." 인자를 경로로 변환해버려 ISCC가
+      # 스크립트 파일명을 두 개로 인식하는 문제가 있으므로 pwsh 로 그대로 전달한다.
       - name: Compile installer with Inno Setup (ISCC)
-        shell: bash
+        shell: pwsh
         run: |
-          set -e
-
-          ISCC_BIN="ISCC"
-          if ! command -v ISCC >/dev/null 2>&1; then
-            ISCC_BIN="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
-          fi
-
-          "$ISCC_BIN" "/DMyAppVersion=${{ steps.version.outputs.version }}" setup.iss
+          $version = "${{ steps.version.outputs.version }}"
+          $iscc = "ISCC"
+          if (-not (Get-Command ISCC -ErrorAction SilentlyContinue)) {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          Write-Host "ISCC = $iscc, version = $version"
+          & $iscc "/DMyAppVersion=$version" "setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 컴파일 실패 (exit=$LASTEXITCODE)" }
 
       - name: Verify installer output
         shell: bash
