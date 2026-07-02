@@ -23,9 +23,12 @@ namespace Claude_Widget
         private DispatcherTimer _greetTimer = null!;
         private DispatcherTimer _bubbleHideTimer = null!;
         private DispatcherTimer _updateCheckTimer = null!;
+        private DispatcherTimer _activityHideTimer = null!;
+        private DispatcherTimer _breakTimer = null!;
         private readonly Random _random = new();
         private bool _isWorking;
         private bool _wasWorking;
+        private bool _breakNudged;
 
         // --- Enhanced state ---
         private const double BaseWidth = 220;
@@ -286,7 +289,8 @@ namespace Claude_Widget
         {
             // Menu states that need runtime queries.
             MenuStartup.IsChecked = StartupService.IsEnabled();
-            MenuCliHook.IsChecked = CliHookInstaller.IsEnabled();
+            MenuCliHook.IsChecked = CliHookInstaller.IsEnabled(CliHookInstaller.BaseEvents);
+            MenuToolAwareness.IsChecked = _settings.ToolAwareness;
 
             // Start permanent animations
             StartStoryboard("BreathingAnimation");
@@ -313,6 +317,15 @@ namespace Claude_Widget
             // Bubble auto-hide (one-shot; restarted per message)
             _bubbleHideTimer = new DispatcherTimer();
             _bubbleHideTimer.Tick += (_, _) => HideSpeech();
+
+            // Activity badge auto-hide (one-shot; restarted per tool event)
+            _activityHideTimer = new DispatcherTimer();
+            _activityHideTimer.Tick += (_, _) => HideActivity();
+
+            // Break nudge: check once a minute for long continuous work sessions.
+            _breakTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+            _breakTimer.Tick += (_, _) => CheckBreakNudge();
+            _breakTimer.Start();
 
             // Periodic update check (every 6 hours) + one shortly after launch.
             _updateCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(6) };
@@ -394,7 +407,7 @@ namespace Claude_Widget
             try
             {
                 _cliMessages = new CliMessageService();
-                _cliMessages.MessageReceived += OnCliMessage;
+                _cliMessages.EventReceived += OnCliEvent;
                 _cliMessages.DrainExisting();
             }
             catch
@@ -403,16 +416,108 @@ namespace Claude_Widget
             }
         }
 
-        private void OnCliMessage(string text)
+        private void OnCliEvent(CliEvent ev)
         {
             // Raised off the UI thread — marshal in.
-            Dispatcher.BeginInvoke(() =>
+            Dispatcher.BeginInvoke(() => HandleCliEvent(ev));
+        }
+
+        private void HandleCliEvent(CliEvent ev)
+        {
+            switch (ev.Kind)
             {
-                // CLI messages are shown even if the widget is hidden: pop it back up.
-                if (!IsVisible)
-                    Show();
-                ShowSpeech(text, 6500);
-            });
+                case "tool":
+                    if (_settings.ToolAwareness)
+                        ShowActivity(ev.Tool ?? "", ev.Text);
+                    break;
+
+                case "notify":
+                    // Permission / attention: pop up, wave, bubble, and a tray toast so
+                    // it's noticed even when the widget is hidden or on another monitor.
+                    HideActivity();
+                    if (!IsVisible) Show();
+                    StartStoryboard("WaveAnimation");
+                    ShowSpeech(ev.Text, 7000);
+                    ShowTrayToast(ev.Text);
+                    break;
+
+                case "prompt":
+                    HideActivity();
+                    StartStoryboard("IdleBounceAnimation");
+                    ShowSpeech(ev.Text, 2500);
+                    break;
+
+                case "stop":
+                    HideActivity();
+                    StartStoryboard("BlinkAnimation");
+                    ShowSpeech(ev.Text, 3000);
+                    break;
+
+                case "substop":
+                case "session":
+                    ShowSpeech(ev.Text, 3000);
+                    break;
+
+                default: // "text"
+                    if (!IsVisible) Show();
+                    ShowSpeech(ev.Text, 6500);
+                    break;
+            }
+        }
+
+        // ===================== Tool activity badge =====================
+
+        private DateTime _lastToolBubbleAt = DateTime.MinValue;
+
+        private void ShowActivity(string tool, string label)
+        {
+            ActivityGlyph.Text = GlyphForTool(tool);
+            ActivityBadge.ToolTip = label;
+            StartStoryboard("ActivityPopIn");
+
+            // Keep the badge visible while tools keep coming; auto-hide after a lull.
+            _activityHideTimer.Stop();
+            _activityHideTimer.Interval = TimeSpan.FromSeconds(6);
+            _activityHideTimer.Start();
+
+            // Throttle the textual bubble so rapid tool bursts don't flicker.
+            if ((DateTime.Now - _lastToolBubbleAt).TotalSeconds >= 4)
+            {
+                _lastToolBubbleAt = DateTime.Now;
+                ShowSpeech(label, 2200);
+            }
+        }
+
+        private void HideActivity()
+        {
+            _activityHideTimer.Stop();
+            if (ActivityBadge.Opacity > 0.01)
+                StartStoryboard("ActivityFadeOut");
+        }
+
+        /// <summary>Segoe MDL2 Assets glyph for a Claude Code tool name.</summary>
+        private static string GlyphForTool(string tool) => tool switch
+        {
+            "Read" or "NotebookRead" => "",       // Document
+            "Edit" or "MultiEdit" or "Write" or "NotebookEdit" => "", // Edit (pencil)
+            "Bash" or "BashOutput" or "KillShell" => "", // Command prompt
+            "Glob" => "",                          // Folder
+            "Grep" => "",                          // Search
+            "WebFetch" or "WebSearch" => "",       // Globe
+            "Task" => "",                          // People/agent-ish
+            "TodoWrite" => "",                     // Checklist
+            _ when tool.StartsWith("mcp__", StringComparison.OrdinalIgnoreCase) => "", // Component
+            _ => "",                               // Processing (gear-ish)
+        };
+
+        private void ShowTrayToast(string text)
+        {
+            try
+            {
+                _trayIcon?.ShowBalloonTip(6000, "Claude Widget", text,
+                    System.Windows.Forms.ToolTipIcon.Info);
+            }
+            catch { /* balloon is best-effort */ }
         }
 
         // ===================== Process detection =====================
@@ -581,6 +686,7 @@ namespace Claude_Widget
             if (_isWorking)
             {
                 _workStartedAt = DateTime.Now;
+                _breakNudged = false;
 
                 // Switch to working mode
                 StartStoryboard("LaptopFadeIn");
@@ -602,6 +708,7 @@ namespace Claude_Widget
             else
             {
                 AccumulateWorkTime();
+                HideActivity();
 
                 // Switch to idle mode
                 StartStoryboard("LaptopFadeOut");
@@ -661,6 +768,20 @@ namespace Claude_Widget
             {
                 _settings.StatsDate = today;
                 _settings.WorkSecondsToday = 0;
+            }
+        }
+
+        /// <summary>Gentle pomodoro-style nudge after a long continuous work stretch.</summary>
+        private const int BreakNudgeMinutes = 50;
+
+        private void CheckBreakNudge()
+        {
+            if (!_isWorking || _breakNudged || _workStartedAt is not DateTime start)
+                return;
+            if ((DateTime.Now - start).TotalMinutes >= BreakNudgeMinutes)
+            {
+                _breakNudged = true;
+                ShowSpeech($"{BreakNudgeMinutes}분째 열일 중! 잠깐 쉬어요", 5000);
             }
         }
 
@@ -988,11 +1109,14 @@ namespace Claude_Widget
             if (sender is not MenuItem menuItem)
                 return;
 
-            bool ok = menuItem.IsChecked ? CliHookInstaller.Enable() : CliHookInstaller.Disable();
+            // Register/unregister every event (base lifecycle + PreToolUse for tool awareness).
+            bool ok = menuItem.IsChecked
+                ? CliHookInstaller.Enable(CliHookInstaller.AllEvents)
+                : CliHookInstaller.Disable(CliHookInstaller.AllEvents);
             if (!ok)
             {
-                menuItem.IsChecked = CliHookInstaller.IsEnabled();
-                ShowSpeech("CLI 설정을 바꾸지 못했어요 😢", 3200);
+                menuItem.IsChecked = CliHookInstaller.IsEnabled(CliHookInstaller.BaseEvents);
+                ShowSpeech("CLI 설정을 바꾸지 못했어요", 3200);
                 return;
             }
 
@@ -1000,6 +1124,18 @@ namespace Claude_Widget
                 ShowSpeech("Claude CLI 알림을 연동했어요!\n새 세션부터 적용돼요", 5000);
             else
                 ShowSpeech("CLI 알림 연동을 껐어요", 3000);
+        }
+
+        private void ToggleToolAwareness_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem menuItem)
+                return;
+
+            _settings.ToolAwareness = menuItem.IsChecked;
+            SettingsService.Save(_settings);
+            if (!_settings.ToolAwareness)
+                HideActivity();
+            ShowSpeech(_settings.ToolAwareness ? "작업 상세 표시를 켰어요" : "작업 상세 표시를 껐어요", 2500);
         }
 
         private void ChangeTheme_Click(object sender, RoutedEventArgs e)
@@ -1052,6 +1188,8 @@ namespace Claude_Widget
             _greetTimer?.Stop();
             _updateCheckTimer?.Stop();
             _bubbleHideTimer?.Stop();
+            _activityHideTimer?.Stop();
+            _breakTimer?.Stop();
 
             _cliMessages?.Dispose();
 

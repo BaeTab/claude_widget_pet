@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -8,16 +9,24 @@ using System.Text.Json.Nodes;
 namespace Claude_Widget.Services
 {
     /// <summary>
-    /// Enables/disables the widget's Claude Code integration by safely merging
-    /// hook entries into the user's global settings (%USERPROFILE%\.claude\settings.json).
+    /// Enables/disables the widget's Claude Code integration by safely merging hook
+    /// entries into the user's global settings (%USERPROFILE%\.claude\settings.json).
     ///
     /// The merge is idempotent and additive: existing hooks are preserved, and only
     /// entries whose command references this executable with <c>--hook</c> are touched.
+    ///
+    /// Two event groups:
+    ///   • Base  — low-frequency, high-value lifecycle events (a handful per session).
+    ///   • Tool  — PreToolUse; fires once per tool call, so it is opt-in.
     /// </summary>
     public static class CliHookInstaller
     {
-        // Lifecycle events we surface as speech bubbles.
-        private static readonly string[] Events = { "Notification", "Stop", "SubagentStop" };
+        public static readonly string[] BaseEvents =
+            { "Notification", "Stop", "SubagentStop", "UserPromptSubmit", "SessionStart", "SessionEnd" };
+
+        public static readonly string[] ToolEvents = { "PreToolUse" };
+
+        public static IEnumerable<string> AllEvents => BaseEvents.Concat(ToolEvents);
 
         public static string SettingsPath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -33,20 +42,15 @@ namespace Claude_Widget.Services
             && command.Contains("--hook", StringComparison.OrdinalIgnoreCase)
             && command.Contains("ClaudeWidget", StringComparison.OrdinalIgnoreCase);
 
-        public static bool IsEnabled()
+        /// <summary>True if our hook is present for every event in <paramref name="events"/>.</summary>
+        public static bool IsEnabled(IEnumerable<string> events)
         {
             try
             {
                 var root = LoadRoot();
                 if (root["hooks"] is not JsonObject hooks)
                     return false;
-
-                foreach (var ev in Events)
-                {
-                    if (hooks[ev] is JsonArray arr && ContainsOurHook(arr))
-                        return true;
-                }
-                return false;
+                return events.All(ev => hooks[ev] is JsonArray arr && ContainsOurHook(arr));
             }
             catch
             {
@@ -54,8 +58,8 @@ namespace Claude_Widget.Services
             }
         }
 
-        /// <summary>Adds our hook entries. Returns true if the file was written successfully.</summary>
-        public static bool Enable()
+        /// <summary>Adds our hook to each listed event. Returns true on success.</summary>
+        public static bool Enable(IEnumerable<string> events)
         {
             try
             {
@@ -66,7 +70,7 @@ namespace Claude_Widget.Services
                     root["hooks"] = hooks;
                 }
 
-                foreach (var ev in Events)
+                foreach (var ev in events)
                 {
                     if (hooks[ev] is not JsonArray arr)
                     {
@@ -86,8 +90,8 @@ namespace Claude_Widget.Services
             }
         }
 
-        /// <summary>Removes only our hook entries, leaving everything else intact.</summary>
-        public static bool Disable()
+        /// <summary>Removes only our hook from each listed event. Returns true on success.</summary>
+        public static bool Disable(IEnumerable<string> events)
         {
             try
             {
@@ -95,7 +99,7 @@ namespace Claude_Widget.Services
                 if (root["hooks"] is not JsonObject hooks)
                     return true;
 
-                foreach (var ev in Events)
+                foreach (var ev in events)
                 {
                     if (hooks[ev] is not JsonArray arr)
                         continue;

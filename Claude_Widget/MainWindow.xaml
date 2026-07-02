@@ -12,629 +12,673 @@
 		ResizeMode="NoResize"
 		MouseLeftButtonDown="Window_MouseLeftButtonDown">
 
-    <Window.ContextMenu>
-        <ContextMenu x:Name="WidgetContextMenu">
-            <MenuItem Header="오늘의 기록 보기" Click="ShowStats_Click"/>
-            <Separator/>
-            <MenuItem Header="테마">
-                <MenuItem Header="클로드 (주황)" Tag="Claude" Click="ChangeTheme_Click"/>
-                <MenuItem Header="바다 (파랑)" Tag="Ocean" Click="ChangeTheme_Click"/>
-                <MenuItem Header="숲 (초록)" Tag="Forest" Click="ChangeTheme_Click"/>
-                <MenuItem Header="포도 (보라)" Tag="Grape" Click="ChangeTheme_Click"/>
-                <MenuItem Header="자정 (다크)" Tag="Midnight" Click="ChangeTheme_Click"/>
-            </MenuItem>
-            <MenuItem Header="크기">
-                <MenuItem Header="작게" Tag="0.7" Click="ChangeSize_Click"/>
-                <MenuItem Header="보통" Tag="1.0" Click="ChangeSize_Click"/>
-                <MenuItem Header="크게" Tag="1.4" Click="ChangeSize_Click"/>
-            </MenuItem>
-            <Separator/>
-            <MenuItem x:Name="MenuSpeech" Header="말풍선 표시" IsCheckable="True" IsChecked="True" Click="ToggleSpeech_Click"/>
-            <MenuItem x:Name="MenuTopmost" Header="항상 위에 표시" IsCheckable="True" IsChecked="True" Click="ToggleTopmost_Click"/>
-            <MenuItem x:Name="MenuStartup" Header="Windows 시작 시 실행" IsCheckable="True" Click="ToggleStartup_Click"/>
-            <MenuItem x:Name="MenuAutoUpdate" Header="자동 업데이트 확인" IsCheckable="True" IsChecked="True" Click="ToggleAutoUpdate_Click"/>
-            <MenuItem x:Name="MenuCliHook" Header="Claude CLI 알림 연동" IsCheckable="True" Click="ToggleCliHook_Click"
-                      ToolTip="Claude Code의 알림·작업완료 메시지를 말풍선으로 표시합니다"/>
-            <Separator/>
-            <MenuItem Header="업데이트 확인" Click="CheckUpdate_Click"/>
-            <MenuItem Header="정보" Click="ShowAbout_Click"/>
-            <Separator/>
-            <MenuItem Header="종료" Click="Exit_Click"/>
-        </ContextMenu>
-    </Window.ContextMenu>
+	<Window.ContextMenu>
+		<ContextMenu x:Name="WidgetContextMenu">
+			<MenuItem Header="오늘의 기록 보기" Click="ShowStats_Click"/>
+			<Separator/>
+			<MenuItem Header="테마">
+				<MenuItem Header="클로드 (주황)" Tag="Claude" Click="ChangeTheme_Click"/>
+				<MenuItem Header="바다 (파랑)" Tag="Ocean" Click="ChangeTheme_Click"/>
+				<MenuItem Header="숲 (초록)" Tag="Forest" Click="ChangeTheme_Click"/>
+				<MenuItem Header="포도 (보라)" Tag="Grape" Click="ChangeTheme_Click"/>
+				<MenuItem Header="자정 (다크)" Tag="Midnight" Click="ChangeTheme_Click"/>
+			</MenuItem>
+			<MenuItem Header="크기">
+				<MenuItem Header="작게" Tag="0.7" Click="ChangeSize_Click"/>
+				<MenuItem Header="보통" Tag="1.0" Click="ChangeSize_Click"/>
+				<MenuItem Header="크게" Tag="1.4" Click="ChangeSize_Click"/>
+			</MenuItem>
+			<Separator/>
+			<MenuItem x:Name="MenuSpeech" Header="말풍선 표시" IsCheckable="True" IsChecked="True" Click="ToggleSpeech_Click"/>
+			<MenuItem x:Name="MenuTopmost" Header="항상 위에 표시" IsCheckable="True" IsChecked="True" Click="ToggleTopmost_Click"/>
+			<MenuItem x:Name="MenuStartup" Header="Windows 시작 시 실행" IsCheckable="True" Click="ToggleStartup_Click"/>
+			<MenuItem x:Name="MenuAutoUpdate" Header="자동 업데이트 확인" IsCheckable="True" IsChecked="True" Click="ToggleAutoUpdate_Click"/>
+			<MenuItem x:Name="MenuCliHook" Header="Claude CLI 알림 연동" IsCheckable="True" Click="ToggleCliHook_Click"
+					  ToolTip="Claude Code의 알림·작업완료 메시지를 말풍선으로 표시합니다"/>
+			<MenuItem x:Name="MenuToolAwareness" Header="작업 상세 표시 (툴 인식)" IsCheckable="True" IsChecked="True" Click="ToggleToolAwareness_Click"
+					  ToolTip="Claude가 어떤 작업(파일 읽기·명령 실행 등)을 하는지 아이콘으로 표시합니다"/>
+			<Separator/>
+			<MenuItem Header="업데이트 확인" Click="CheckUpdate_Click"/>
+			<MenuItem Header="정보" Click="ShowAbout_Click"/>
+			<Separator/>
+			<MenuItem Header="종료" Click="Exit_Click"/>
+		</ContextMenu>
+	</Window.ContextMenu>
 
-    <Window.Resources>
-        <QuadraticEase x:Key="EaseInOut" EasingMode="EaseInOut"/>
+	<Window.Resources>
+		<QuadraticEase x:Key="EaseInOut" EasingMode="EaseInOut"/>
 
-        <!-- Themeable brushes (recolored in code by the selected theme).
+		<!-- Themeable brushes (recolored in code by the selected theme).
 			 Body uses a radial gradient for a soft 3D shell look. -->
-        <RadialGradientBrush x:Key="BodyBrush" GradientOrigin="0.4,0.3" Center="0.5,0.5" RadiusX="0.78" RadiusY="0.74">
-            <GradientStop Color="#E8906F" Offset="0"/>
-            <GradientStop Color="#C9603F" Offset="1"/>
-        </RadialGradientBrush>
-        <SolidColorBrush x:Key="BodyStrokeBrush" Color="#B15038"/>
-        <SolidColorBrush x:Key="LimbBrush" Color="#CE6A4C"/>
-        <SolidColorBrush x:Key="LimbStrokeBrush" Color="#A9502F"/>
+		<RadialGradientBrush x:Key="BodyBrush" GradientOrigin="0.4,0.3" Center="0.5,0.5" RadiusX="0.78" RadiusY="0.74">
+			<GradientStop Color="#E8906F" Offset="0"/>
+			<GradientStop Color="#C9603F" Offset="1"/>
+		</RadialGradientBrush>
+		<SolidColorBrush x:Key="BodyStrokeBrush" Color="#B15038"/>
+		<SolidColorBrush x:Key="LimbBrush" Color="#CE6A4C"/>
+		<SolidColorBrush x:Key="LimbStrokeBrush" Color="#A9502F"/>
 
-        <!-- Breathing animation (always running) -->
-        <Storyboard x:Key="BreathingAnimation" RepeatBehavior="Forever">
-            <DoubleAnimation
+		<!-- Breathing animation (always running) -->
+		<Storyboard x:Key="BreathingAnimation" RepeatBehavior="Forever">
+			<DoubleAnimation
 				Storyboard.TargetName="BodyTransform"
 				Storyboard.TargetProperty="ScaleY"
 				From="1.0" To="1.03" Duration="0:0:1.2"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="ShadowTransform"
 				Storyboard.TargetProperty="ScaleX"
 				From="1.0" To="0.95" Duration="0:0:1.2"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Blink animation -->
-        <Storyboard x:Key="BlinkAnimation">
-            <DoubleAnimation
+		<!-- Blink animation -->
+		<Storyboard x:Key="BlinkAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="LeftEyeGroup"
 				Storyboard.TargetProperty="Opacity"
 				From="1" To="0" Duration="0:0:0.08"
 				AutoReverse="True"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightEyeGroup"
 				Storyboard.TargetProperty="Opacity"
 				From="1" To="0" Duration="0:0:0.08"
 				AutoReverse="True"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="LeftEyeClosed"
 				Storyboard.TargetProperty="Opacity"
 				From="0" To="1" Duration="0:0:0.08"
 				AutoReverse="True"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightEyeClosed"
 				Storyboard.TargetProperty="Opacity"
 				From="0" To="1" Duration="0:0:0.08"
 				AutoReverse="True"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Look left animation -->
-        <Storyboard x:Key="LookLeftAnimation">
-            <DoubleAnimation
+		<!-- Look left animation -->
+		<Storyboard x:Key="LookLeftAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="LeftPupilTranslate"
 				Storyboard.TargetProperty="X"
 				From="0" To="-3" Duration="0:0:0.4"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightPupilTranslate"
 				Storyboard.TargetProperty="X"
 				From="0" To="-3" Duration="0:0:0.4"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Look right animation -->
-        <Storyboard x:Key="LookRightAnimation">
-            <DoubleAnimation
+		<!-- Look right animation -->
+		<Storyboard x:Key="LookRightAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="LeftPupilTranslate"
 				Storyboard.TargetProperty="X"
 				From="0" To="3" Duration="0:0:0.4"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightPupilTranslate"
 				Storyboard.TargetProperty="X"
 				From="0" To="3" Duration="0:0:0.4"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Idle bounce -->
-        <Storyboard x:Key="IdleBounceAnimation">
-            <DoubleAnimation
+		<!-- Idle bounce -->
+		<Storyboard x:Key="IdleBounceAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="CharacterTranslate"
 				Storyboard.TargetProperty="Y"
 				From="0" To="-6" Duration="0:0:0.25"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Typing animation: arms slam up/down alternating -->
-        <Storyboard x:Key="TypingAnimation" RepeatBehavior="Forever">
-            <!-- Left arm: big vertical slam -->
-            <DoubleAnimation
+		<!-- Typing animation: arms slam up/down alternating -->
+		<Storyboard x:Key="TypingAnimation" RepeatBehavior="Forever">
+			<!-- Left arm: big vertical slam -->
+			<DoubleAnimation
 				Storyboard.TargetName="LeftArmTypingTranslate"
 				Storyboard.TargetProperty="Y"
 				From="0" To="-8" Duration="0:0:0.15"
 				AutoReverse="True"/>
-            <!-- Right arm: offset timing for alternating feel -->
-            <DoubleAnimation
+			<!-- Right arm: offset timing for alternating feel -->
+			<DoubleAnimation
 				Storyboard.TargetName="RightArmTypingTranslate"
 				Storyboard.TargetProperty="Y"
 				From="0" To="-8" Duration="0:0:0.15"
 				AutoReverse="True"
 				BeginTime="0:0:0.15"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Body bobbing while typing -->
-        <Storyboard x:Key="TypingBodyBob" RepeatBehavior="Forever">
-            <DoubleAnimation
+		<!-- Body bobbing while typing -->
+		<Storyboard x:Key="TypingBodyBob" RepeatBehavior="Forever">
+			<DoubleAnimation
 				Storyboard.TargetName="CharacterTranslate"
 				Storyboard.TargetProperty="Y"
 				From="0" To="-4" Duration="0:0:0.18"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Eyes look down at screen while working -->
-        <Storyboard x:Key="EyesLookDownAnimation">
-            <DoubleAnimation
+		<!-- Eyes look down at screen while working -->
+		<Storyboard x:Key="EyesLookDownAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="LeftPupilTranslate"
 				Storyboard.TargetProperty="Y"
 				To="3" Duration="0:0:0.3"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightPupilTranslate"
 				Storyboard.TargetProperty="Y"
 				To="3" Duration="0:0:0.3"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Eyes look back center (idle) -->
-        <Storyboard x:Key="EyesLookCenterAnimation">
-            <DoubleAnimation
+		<!-- Eyes look back center (idle) -->
+		<Storyboard x:Key="EyesLookCenterAnimation">
+			<DoubleAnimation
 				Storyboard.TargetName="LeftPupilTranslate"
 				Storyboard.TargetProperty="Y"
 				To="0" Duration="0:0:0.3"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="RightPupilTranslate"
 				Storyboard.TargetProperty="Y"
 				To="0" Duration="0:0:0.3"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Screen glow pulse -->
-        <Storyboard x:Key="ScreenGlowAnimation" RepeatBehavior="Forever">
-            <DoubleAnimation
+		<!-- Screen glow pulse -->
+		<Storyboard x:Key="ScreenGlowAnimation" RepeatBehavior="Forever">
+			<DoubleAnimation
 				Storyboard.TargetName="ScreenGlow"
 				Storyboard.TargetProperty="Opacity"
 				From="0.5" To="1.0" Duration="0:0:0.6"
 				AutoReverse="True"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Laptop fade in -->
-        <Storyboard x:Key="LaptopFadeIn">
-            <DoubleAnimation
+		<!-- Laptop fade in -->
+		<Storyboard x:Key="LaptopFadeIn">
+			<DoubleAnimation
 				Storyboard.TargetName="LaptopGroup"
 				Storyboard.TargetProperty="Opacity"
 				From="0" To="1" Duration="0:0:0.3"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Laptop fade out -->
-        <Storyboard x:Key="LaptopFadeOut">
-            <DoubleAnimation
+		<!-- Laptop fade out -->
+		<Storyboard x:Key="LaptopFadeOut">
+			<DoubleAnimation
 				Storyboard.TargetName="LaptopGroup"
 				Storyboard.TargetProperty="Opacity"
 				From="1" To="0" Duration="0:0:0.3"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Sparkle twinkle -->
-        <Storyboard x:Key="SparkleAnimation" RepeatBehavior="Forever">
-            <DoubleAnimation
+		<!-- Sparkle twinkle -->
+		<Storyboard x:Key="SparkleAnimation" RepeatBehavior="Forever">
+			<DoubleAnimation
 				Storyboard.TargetName="SparkleRotate"
 				Storyboard.TargetProperty="Angle"
 				From="0" To="360" Duration="0:0:8"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="SparkleScale"
 				Storyboard.TargetProperty="ScaleX"
 				From="0.85" To="1.15" Duration="0:0:1.5"
 				AutoReverse="True"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="SparkleScale"
 				Storyboard.TargetProperty="ScaleY"
 				From="0.85" To="1.15" Duration="0:0:1.5"
 				AutoReverse="True"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Speech bubble pop-in (scale + fade with a playful overshoot) -->
-        <BackEase x:Key="BubbleEase" EasingMode="EaseOut" Amplitude="0.6"/>
-        <Storyboard x:Key="BubblePopIn">
-            <DoubleAnimation
+		<!-- Speech bubble pop-in (scale + fade with a playful overshoot) -->
+		<BackEase x:Key="BubbleEase" EasingMode="EaseOut" Amplitude="0.6"/>
+		<Storyboard x:Key="BubblePopIn">
+			<DoubleAnimation
 				Storyboard.TargetName="SpeechBubble"
 				Storyboard.TargetProperty="Opacity"
 				To="1" Duration="0:0:0.18"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="BubbleScale"
 				Storyboard.TargetProperty="ScaleX"
 				From="0.5" To="1" Duration="0:0:0.28"
 				EasingFunction="{StaticResource BubbleEase}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="BubbleScale"
 				Storyboard.TargetProperty="ScaleY"
 				From="0.5" To="1" Duration="0:0:0.28"
 				EasingFunction="{StaticResource BubbleEase}"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Speech bubble fade-out -->
-        <Storyboard x:Key="BubbleFadeOut">
-            <DoubleAnimation
+		<!-- Speech bubble fade-out -->
+		<Storyboard x:Key="BubbleFadeOut">
+			<DoubleAnimation
 				Storyboard.TargetName="SpeechBubble"
 				Storyboard.TargetProperty="Opacity"
 				To="0" Duration="0:0:0.25"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="BubbleScale"
 				Storyboard.TargetProperty="ScaleY"
 				To="0.7" Duration="0:0:0.25"/>
-        </Storyboard>
+		</Storyboard>
 
-        <!-- Update badge pulse (draws the eye to a pending update) -->
-        <Storyboard x:Key="UpdateBadgePulse" RepeatBehavior="Forever">
-            <DoubleAnimation
+		<!-- Update badge pulse (draws the eye to a pending update) -->
+		<Storyboard x:Key="UpdateBadgePulse" RepeatBehavior="Forever">
+			<DoubleAnimation
 				Storyboard.TargetName="UpdateBadgeScale"
 				Storyboard.TargetProperty="ScaleX"
 				From="1" To="1.25" Duration="0:0:0.7"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-            <DoubleAnimation
+			<DoubleAnimation
 				Storyboard.TargetName="UpdateBadgeScale"
 				Storyboard.TargetProperty="ScaleY"
 				From="1" To="1.25" Duration="0:0:0.7"
 				AutoReverse="True"
 				EasingFunction="{StaticResource EaseInOut}"/>
-        </Storyboard>
+		</Storyboard>
 
-    </Window.Resources>
+		<!-- Attention wave (rock side-to-side) — used for permission/notification alerts -->
+		<Storyboard x:Key="WaveAnimation">
+			<DoubleAnimationUsingKeyFrames Storyboard.TargetName="CharacterTranslate" Storyboard.TargetProperty="X">
+				<EasingDoubleKeyFrame KeyTime="0:0:0.00" Value="0"/>
+				<EasingDoubleKeyFrame KeyTime="0:0:0.10" Value="7"/>
+				<EasingDoubleKeyFrame KeyTime="0:0:0.25" Value="-7"/>
+				<EasingDoubleKeyFrame KeyTime="0:0:0.40" Value="5"/>
+				<EasingDoubleKeyFrame KeyTime="0:0:0.55" Value="-5"/>
+				<EasingDoubleKeyFrame KeyTime="0:0:0.70" Value="0"/>
+			</DoubleAnimationUsingKeyFrames>
+		</Storyboard>
 
-    <Canvas x:Name="MainCanvas" Width="220" Height="300">
-        <Canvas.RenderTransform>
-            <TransformGroup>
-                <ScaleTransform x:Name="WidgetScale" ScaleX="1" ScaleY="1"/>
-            </TransformGroup>
-        </Canvas.RenderTransform>
+		<!-- Activity badge pop (when the current tool changes) -->
+		<Storyboard x:Key="ActivityPopIn">
+			<DoubleAnimation Storyboard.TargetName="ActivityBadge" Storyboard.TargetProperty="Opacity"
+							 To="1" Duration="0:0:0.15"/>
+			<DoubleAnimation Storyboard.TargetName="ActivityScale" Storyboard.TargetProperty="ScaleX"
+							 From="0.5" To="1" Duration="0:0:0.25" EasingFunction="{StaticResource BubbleEase}"/>
+			<DoubleAnimation Storyboard.TargetName="ActivityScale" Storyboard.TargetProperty="ScaleY"
+							 From="0.5" To="1" Duration="0:0:0.25" EasingFunction="{StaticResource BubbleEase}"/>
+		</Storyboard>
+		<Storyboard x:Key="ActivityFadeOut">
+			<DoubleAnimation Storyboard.TargetName="ActivityBadge" Storyboard.TargetProperty="Opacity"
+							 To="0" Duration="0:0:0.25"/>
+		</Storyboard>
 
-        <!-- Entire character group for bounce (offset down/right to leave headroom for the speech bubble) -->
-        <Canvas Canvas.Left="10" Canvas.Top="56">
-            <Canvas.RenderTransform>
-                <TranslateTransform x:Name="CharacterTranslate" X="0" Y="0"/>
-            </Canvas.RenderTransform>
+	</Window.Resources>
 
-            <!-- Shadow -->
-            <Ellipse Canvas.Left="55" Canvas.Top="188" Width="90" Height="14"
+	<Canvas x:Name="MainCanvas" Width="220" Height="300">
+		<Canvas.RenderTransform>
+			<TransformGroup>
+				<ScaleTransform x:Name="WidgetScale" ScaleX="1" ScaleY="1"/>
+			</TransformGroup>
+		</Canvas.RenderTransform>
+
+		<!-- Entire character group for bounce (offset down/right to leave headroom for the speech bubble) -->
+		<Canvas Canvas.Left="10" Canvas.Top="56">
+			<Canvas.RenderTransform>
+				<TranslateTransform x:Name="CharacterTranslate" X="0" Y="0"/>
+			</Canvas.RenderTransform>
+
+			<!-- Shadow -->
+			<Ellipse Canvas.Left="55" Canvas.Top="188" Width="90" Height="14"
 					 Fill="#33000000" RenderTransformOrigin="0.5,0.5">
-                <Ellipse.RenderTransform>
-                    <ScaleTransform x:Name="ShadowTransform" ScaleX="1" ScaleY="1"/>
-                </Ellipse.RenderTransform>
-            </Ellipse>
+				<Ellipse.RenderTransform>
+					<ScaleTransform x:Name="ShadowTransform" ScaleX="1" ScaleY="1"/>
+				</Ellipse.RenderTransform>
+			</Ellipse>
 
-            <!-- Body group (for breathing) -->
-            <Canvas Canvas.Left="0" Canvas.Top="0" RenderTransformOrigin="0.5,1">
-                <Canvas.RenderTransform>
-                    <ScaleTransform x:Name="BodyTransform" ScaleX="1" ScaleY="1" CenterX="100" CenterY="195"/>
-                </Canvas.RenderTransform>
+			<!-- Body group (for breathing) -->
+			<Canvas Canvas.Left="0" Canvas.Top="0" RenderTransformOrigin="0.5,1">
+				<Canvas.RenderTransform>
+					<ScaleTransform x:Name="BodyTransform" ScaleX="1" ScaleY="1" CenterX="100" CenterY="195"/>
+				</Canvas.RenderTransform>
 
-                <!-- ===== Antennae (behind body; tips arc above the head) ===== -->
-                <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
+				<!-- ===== Antennae (behind body; tips arc above the head) ===== -->
+				<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
 					  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"
 					  Data="M 92,78 Q 76,50 66,32 Q 60,22 54,14"/>
-                <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
+				<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
 					  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"
 					  Data="M 108,78 Q 124,50 134,32 Q 140,22 146,14"/>
-                <Ellipse Canvas.Left="50" Canvas.Top="10" Width="9" Height="9"
+				<Ellipse Canvas.Left="50" Canvas.Top="10" Width="9" Height="9"
 						 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
-                <Ellipse Canvas.Left="142" Canvas.Top="10" Width="9" Height="9"
+				<Ellipse Canvas.Left="142" Canvas.Top="10" Width="9" Height="9"
 						 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
 
-                <!-- ===== Walking legs (behind body, peeking from the lower sides) ===== -->
-                <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
+				<!-- ===== Walking legs (behind body, peeking from the lower sides) ===== -->
+				<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
 					  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
 					  Data="M 60,168 L 42,180  M 62,176 L 46,190  M 66,184 L 52,198"/>
-                <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
+				<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="2.6"
 					  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
 					  Data="M 140,168 L 158,180  M 138,176 L 154,190  M 134,184 L 148,198"/>
 
-                <!-- ===== Tail fan (behind body, bottom center) ===== -->
-                <Ellipse Canvas.Left="72" Canvas.Top="182" Width="20" Height="24"
+				<!-- ===== Tail fan (behind body, bottom center) ===== -->
+				<Ellipse Canvas.Left="72" Canvas.Top="182" Width="20" Height="24"
 						 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"
 						 RenderTransformOrigin="0.5,0">
-                    <Ellipse.RenderTransform>
-                        <RotateTransform Angle="-24"/>
-                    </Ellipse.RenderTransform>
-                </Ellipse>
-                <Ellipse Canvas.Left="108" Canvas.Top="182" Width="20" Height="24"
+					<Ellipse.RenderTransform>
+						<RotateTransform Angle="-24"/>
+					</Ellipse.RenderTransform>
+				</Ellipse>
+				<Ellipse Canvas.Left="108" Canvas.Top="182" Width="20" Height="24"
 						 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"
 						 RenderTransformOrigin="0.5,0">
-                    <Ellipse.RenderTransform>
-                        <RotateTransform Angle="24"/>
-                    </Ellipse.RenderTransform>
-                </Ellipse>
-                <Ellipse Canvas.Left="89" Canvas.Top="184" Width="22" Height="26"
+					<Ellipse.RenderTransform>
+						<RotateTransform Angle="24"/>
+					</Ellipse.RenderTransform>
+				</Ellipse>
+				<Ellipse Canvas.Left="89" Canvas.Top="184" Width="22" Height="26"
 						 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
 
-                <!-- ===== Main body / carapace ===== -->
-                <Ellipse x:Name="BodyEllipse" Canvas.Left="40" Canvas.Top="68" Width="120" Height="128"
+				<!-- ===== Main body / carapace ===== -->
+				<Ellipse x:Name="BodyEllipse" Canvas.Left="40" Canvas.Top="68" Width="120" Height="128"
 						 Fill="{DynamicResource BodyBrush}" Stroke="{DynamicResource BodyStrokeBrush}" StrokeThickness="1.5"/>
 
-                <!-- Carapace ridge (subtle shell segmentation) -->
-                <Path Stroke="{DynamicResource BodyStrokeBrush}" StrokeThickness="1" Opacity="0.35" Fill="Transparent"
+				<!-- Carapace ridge (subtle shell segmentation) -->
+				<Path Stroke="{DynamicResource BodyStrokeBrush}" StrokeThickness="1" Opacity="0.35" Fill="Transparent"
 					  Data="M 62,168 Q 100,178 138,168"/>
 
-                <!-- Body highlight (glossy effect) -->
-                <Ellipse Canvas.Left="55" Canvas.Top="78" Width="60" Height="40"
+				<!-- Body highlight (glossy effect) -->
+				<Ellipse Canvas.Left="55" Canvas.Top="78" Width="60" Height="40"
 						 Opacity="0.25">
-                    <Ellipse.Fill>
-                        <RadialGradientBrush>
-                            <GradientStop Color="White" Offset="0"/>
-                            <GradientStop Color="Transparent" Offset="1"/>
-                        </RadialGradientBrush>
-                    </Ellipse.Fill>
-                </Ellipse>
+					<Ellipse.Fill>
+						<RadialGradientBrush>
+							<GradientStop Color="White" Offset="0"/>
+							<GradientStop Color="Transparent" Offset="1"/>
+						</RadialGradientBrush>
+					</Ellipse.Fill>
+				</Ellipse>
 
-                <!-- ===== Left claw (pincer) — keeps the arm's typing transform ===== -->
-                <Canvas x:Name="LeftArm">
-                    <Canvas.RenderTransform>
-                        <TransformGroup>
-                            <RotateTransform Angle="8" CenterX="28" CenterY="150"/>
-                            <TranslateTransform x:Name="LeftArmTypingTranslate" X="0" Y="0"/>
-                        </TransformGroup>
-                    </Canvas.RenderTransform>
-                    <!-- upper arm link to body -->
-                    <Ellipse Canvas.Left="30" Canvas.Top="146" Width="28" Height="13"
+				<!-- ===== Left claw (pincer) — keeps the arm's typing transform ===== -->
+				<Canvas x:Name="LeftArm">
+					<Canvas.RenderTransform>
+						<TransformGroup>
+							<RotateTransform Angle="8" CenterX="28" CenterY="150"/>
+							<TranslateTransform x:Name="LeftArmTypingTranslate" X="0" Y="0"/>
+						</TransformGroup>
+					</Canvas.RenderTransform>
+					<!-- upper arm link to body -->
+					<Ellipse Canvas.Left="30" Canvas.Top="146" Width="28" Height="13"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"
 							 RenderTransformOrigin="0.5,0.5">
-                        <Ellipse.RenderTransform>
-                            <RotateTransform Angle="22"/>
-                        </Ellipse.RenderTransform>
-                    </Ellipse>
-                    <!-- pincer palm (lower) -->
-                    <Ellipse Canvas.Left="2" Canvas.Top="140" Width="36" Height="28"
+						<Ellipse.RenderTransform>
+							<RotateTransform Angle="22"/>
+						</Ellipse.RenderTransform>
+					</Ellipse>
+					<!-- pincer palm (lower) -->
+					<Ellipse Canvas.Left="2" Canvas.Top="140" Width="36" Height="28"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
-                    <!-- pincer finger (upper) -->
-                    <Ellipse Canvas.Left="8" Canvas.Top="127" Width="27" Height="19"
+					<!-- pincer finger (upper) -->
+					<Ellipse Canvas.Left="8" Canvas.Top="127" Width="27" Height="19"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
-                    <!-- pinch seam -->
-                    <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1.4" Fill="Transparent"
+					<!-- pinch seam -->
+					<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1.4" Fill="Transparent"
 						  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
 						  Data="M 6,150 Q 18,146 32,148"/>
-                </Canvas>
+				</Canvas>
 
-                <!-- ===== Right claw (pincer) — keeps the arm's typing transform ===== -->
-                <Canvas x:Name="RightArm">
-                    <Canvas.RenderTransform>
-                        <TransformGroup>
-                            <RotateTransform Angle="-8" CenterX="172" CenterY="150"/>
-                            <TranslateTransform x:Name="RightArmTypingTranslate" X="0" Y="0"/>
-                        </TransformGroup>
-                    </Canvas.RenderTransform>
-                    <!-- upper arm link to body -->
-                    <Ellipse Canvas.Left="142" Canvas.Top="146" Width="28" Height="13"
+				<!-- ===== Right claw (pincer) — keeps the arm's typing transform ===== -->
+				<Canvas x:Name="RightArm">
+					<Canvas.RenderTransform>
+						<TransformGroup>
+							<RotateTransform Angle="-8" CenterX="172" CenterY="150"/>
+							<TranslateTransform x:Name="RightArmTypingTranslate" X="0" Y="0"/>
+						</TransformGroup>
+					</Canvas.RenderTransform>
+					<!-- upper arm link to body -->
+					<Ellipse Canvas.Left="142" Canvas.Top="146" Width="28" Height="13"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"
 							 RenderTransformOrigin="0.5,0.5">
-                        <Ellipse.RenderTransform>
-                            <RotateTransform Angle="-22"/>
-                        </Ellipse.RenderTransform>
-                    </Ellipse>
-                    <!-- pincer palm (lower) -->
-                    <Ellipse Canvas.Left="162" Canvas.Top="140" Width="36" Height="28"
+						<Ellipse.RenderTransform>
+							<RotateTransform Angle="-22"/>
+						</Ellipse.RenderTransform>
+					</Ellipse>
+					<!-- pincer palm (lower) -->
+					<Ellipse Canvas.Left="162" Canvas.Top="140" Width="36" Height="28"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
-                    <!-- pincer finger (upper) -->
-                    <Ellipse Canvas.Left="165" Canvas.Top="127" Width="27" Height="19"
+					<!-- pincer finger (upper) -->
+					<Ellipse Canvas.Left="165" Canvas.Top="127" Width="27" Height="19"
 							 Fill="{DynamicResource LimbBrush}" Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1"/>
-                    <!-- pinch seam -->
-                    <Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1.4" Fill="Transparent"
+					<!-- pinch seam -->
+					<Path Stroke="{DynamicResource LimbStrokeBrush}" StrokeThickness="1.4" Fill="Transparent"
 						  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
 						  Data="M 168,148 Q 182,146 194,150"/>
-                </Canvas>
+				</Canvas>
 
-                <!-- Left eye group -->
-                <Canvas x:Name="LeftEyeGroup" Canvas.Left="64" Canvas.Top="115">
-                    <!-- Eye white -->
-                    <Ellipse Width="22" Height="24" Fill="White" Stroke="#555" StrokeThickness="0.5"/>
-                    <!-- Pupil -->
-                    <Ellipse Canvas.Left="6" Canvas.Top="6" Width="11" Height="13" Fill="#2D2D2D">
-                        <Ellipse.RenderTransform>
-                            <TranslateTransform x:Name="LeftPupilTranslate" X="0" Y="0"/>
-                        </Ellipse.RenderTransform>
-                    </Ellipse>
-                    <!-- Eye highlight -->
-                    <Ellipse Canvas.Left="10" Canvas.Top="5" Width="5" Height="5" Fill="White"/>
-                </Canvas>
+				<!-- Left eye group -->
+				<Canvas x:Name="LeftEyeGroup" Canvas.Left="64" Canvas.Top="115">
+					<!-- Eye white -->
+					<Ellipse Width="22" Height="24" Fill="White" Stroke="#555" StrokeThickness="0.5"/>
+					<!-- Pupil -->
+					<Ellipse Canvas.Left="6" Canvas.Top="6" Width="11" Height="13" Fill="#2D2D2D">
+						<Ellipse.RenderTransform>
+							<TranslateTransform x:Name="LeftPupilTranslate" X="0" Y="0"/>
+						</Ellipse.RenderTransform>
+					</Ellipse>
+					<!-- Eye highlight -->
+					<Ellipse Canvas.Left="10" Canvas.Top="5" Width="5" Height="5" Fill="White"/>
+				</Canvas>
 
-                <!-- Right eye group -->
-                <Canvas x:Name="RightEyeGroup" Canvas.Left="110" Canvas.Top="115">
-                    <!-- Eye white -->
-                    <Ellipse Width="22" Height="24" Fill="White" Stroke="#555" StrokeThickness="0.5"/>
-                    <!-- Pupil -->
-                    <Ellipse Canvas.Left="6" Canvas.Top="6" Width="11" Height="13" Fill="#2D2D2D">
-                        <Ellipse.RenderTransform>
-                            <TranslateTransform x:Name="RightPupilTranslate" X="0" Y="0"/>
-                        </Ellipse.RenderTransform>
-                    </Ellipse>
-                    <!-- Eye highlight -->
-                    <Ellipse Canvas.Left="10" Canvas.Top="5" Width="5" Height="5" Fill="White"/>
-                </Canvas>
+				<!-- Right eye group -->
+				<Canvas x:Name="RightEyeGroup" Canvas.Left="110" Canvas.Top="115">
+					<!-- Eye white -->
+					<Ellipse Width="22" Height="24" Fill="White" Stroke="#555" StrokeThickness="0.5"/>
+					<!-- Pupil -->
+					<Ellipse Canvas.Left="6" Canvas.Top="6" Width="11" Height="13" Fill="#2D2D2D">
+						<Ellipse.RenderTransform>
+							<TranslateTransform x:Name="RightPupilTranslate" X="0" Y="0"/>
+						</Ellipse.RenderTransform>
+					</Ellipse>
+					<!-- Eye highlight -->
+					<Ellipse Canvas.Left="10" Canvas.Top="5" Width="5" Height="5" Fill="White"/>
+				</Canvas>
 
-                <!-- Closed eyes (for blink, hidden by default) -->
-                <Path x:Name="LeftEyeClosed" Canvas.Left="64" Canvas.Top="126"
+				<!-- Closed eyes (for blink, hidden by default) -->
+				<Path x:Name="LeftEyeClosed" Canvas.Left="64" Canvas.Top="126"
 					  Data="M 0,0 Q 11,-4 22,0" Stroke="#2D2D2D" StrokeThickness="2.5"
 					  Opacity="0"/>
-                <Path x:Name="RightEyeClosed" Canvas.Left="110" Canvas.Top="126"
+				<Path x:Name="RightEyeClosed" Canvas.Left="110" Canvas.Top="126"
 					  Data="M 0,0 Q 11,-4 22,0" Stroke="#2D2D2D" StrokeThickness="2.5"
 					  Opacity="0"/>
 
-                <!-- Left blush -->
-                <Ellipse Canvas.Left="52" Canvas.Top="140" Width="18" Height="9"
+				<!-- Left blush -->
+				<Ellipse Canvas.Left="52" Canvas.Top="140" Width="18" Height="9"
 						 Fill="#FFB6C1" Opacity="0.45"/>
-                <!-- Right blush -->
-                <Ellipse Canvas.Left="126" Canvas.Top="140" Width="18" Height="9"
+				<!-- Right blush -->
+				<Ellipse Canvas.Left="126" Canvas.Top="140" Width="18" Height="9"
 						 Fill="#FFB6C1" Opacity="0.45"/>
 
-                <!-- Mouth (happy) -->
-                <Path Canvas.Left="85" Canvas.Top="148"
+				<!-- Mouth (happy) -->
+				<Path Canvas.Left="85" Canvas.Top="148"
 					  Data="M 0,0 Q 14,10 28,0"
 					  Stroke="#8B4513" StrokeThickness="2" Fill="Transparent"/>
 
-                <!-- Claude sparkle/star on top -->
-                <Canvas Canvas.Left="88" Canvas.Top="48" RenderTransformOrigin="0.5,0.5">
-                    <Canvas.RenderTransform>
-                        <TransformGroup>
-                            <ScaleTransform x:Name="SparkleScale" ScaleX="1" ScaleY="1"/>
-                            <RotateTransform x:Name="SparkleRotate" Angle="0" CenterX="12" CenterY="12"/>
-                        </TransformGroup>
-                    </Canvas.RenderTransform>
-                    <!-- 4-point star -->
-                    <Path Data="M 12,0 L 14.5,8 L 24,12 L 14.5,16 L 12,24 L 9.5,16 L 0,12 L 9.5,8 Z"
+				<!-- Claude sparkle/star on top -->
+				<Canvas Canvas.Left="88" Canvas.Top="48" RenderTransformOrigin="0.5,0.5">
+					<Canvas.RenderTransform>
+						<TransformGroup>
+							<ScaleTransform x:Name="SparkleScale" ScaleX="1" ScaleY="1"/>
+							<RotateTransform x:Name="SparkleRotate" Angle="0" CenterX="12" CenterY="12"/>
+						</TransformGroup>
+					</Canvas.RenderTransform>
+					<!-- 4-point star -->
+					<Path Data="M 12,0 L 14.5,8 L 24,12 L 14.5,16 L 12,24 L 9.5,16 L 0,12 L 9.5,8 Z"
 						  Fill="#FFD700" Stroke="#FFA500" StrokeThickness="0.8"/>
-                    <!-- Small center glow -->
-                    <Ellipse Canvas.Left="8" Canvas.Top="8" Width="8" Height="8"
+					<!-- Small center glow -->
+					<Ellipse Canvas.Left="8" Canvas.Top="8" Width="8" Height="8"
 							 Fill="#FFFACD" Opacity="0.6"/>
-                </Canvas>
-            </Canvas>
+				</Canvas>
+			</Canvas>
 
-            <!-- Laptop group (hidden by default, shown when working) — sleek silver laptop -->
-            <Canvas x:Name="LaptopGroup" Opacity="0">
+			<!-- Laptop group (hidden by default, shown when working) — sleek silver laptop -->
+			<Canvas x:Name="LaptopGroup" Opacity="0">
 
-                <!-- ===== Lid / screen ===== -->
-                <!-- Aluminum lid frame -->
-                <Rectangle Canvas.Left="47" Canvas.Top="158" Width="106" Height="34"
+				<!-- ===== Lid / screen ===== -->
+				<!-- Aluminum lid frame -->
+				<Rectangle Canvas.Left="47" Canvas.Top="158" Width="106" Height="34"
 						   RadiusX="6" RadiusY="6" Stroke="#AEB2B7" StrokeThickness="1">
-                    <Rectangle.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#F2F3F5" Offset="0"/>
-                            <GradientStop Color="#D7DADE" Offset="0.5"/>
-                            <GradientStop Color="#C2C5CA" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Rectangle.Fill>
-                </Rectangle>
+					<Rectangle.Fill>
+						<LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+							<GradientStop Color="#F2F3F5" Offset="0"/>
+							<GradientStop Color="#D7DADE" Offset="0.5"/>
+							<GradientStop Color="#C2C5CA" Offset="1"/>
+						</LinearGradientBrush>
+					</Rectangle.Fill>
+				</Rectangle>
 
-                <!-- Dark bezel -->
-                <Rectangle Canvas.Left="51" Canvas.Top="162" Width="98" Height="27"
+				<!-- Dark bezel -->
+				<Rectangle Canvas.Left="51" Canvas.Top="162" Width="98" Height="27"
 						   RadiusX="4" RadiusY="4" Fill="#1B1D21" Stroke="#0E0F12" StrokeThickness="0.5"/>
 
-                <!-- Webcam dot -->
-                <Ellipse Canvas.Left="99" Canvas.Top="163.4" Width="2" Height="2" Fill="#5A6066"/>
+				<!-- Webcam dot -->
+				<Ellipse Canvas.Left="99" Canvas.Top="163.4" Width="2" Height="2" Fill="#5A6066"/>
 
-                <!-- Glowing display (animated opacity) -->
-                <Rectangle x:Name="ScreenGlow" Canvas.Left="53.5" Canvas.Top="165" Width="93" Height="21"
+				<!-- Glowing display (animated opacity) -->
+				<Rectangle x:Name="ScreenGlow" Canvas.Left="53.5" Canvas.Top="165" Width="93" Height="21"
 						   RadiusX="2.5" RadiusY="2.5" Opacity="0.85">
-                    <Rectangle.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#2E6BFF" Offset="0"/>
-                            <GradientStop Color="#5AA0FF" Offset="0.5"/>
-                            <GradientStop Color="#46C7E8" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Rectangle.Fill>
-                </Rectangle>
+					<Rectangle.Fill>
+						<LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+							<GradientStop Color="#2E6BFF" Offset="0"/>
+							<GradientStop Color="#5AA0FF" Offset="0.5"/>
+							<GradientStop Color="#46C7E8" Offset="1"/>
+						</LinearGradientBrush>
+					</Rectangle.Fill>
+				</Rectangle>
 
-                <!-- Code lines on screen -->
-                <Rectangle Canvas.Left="58" Canvas.Top="168" Width="34" Height="2.2" RadiusX="1" RadiusY="1" Fill="#D6ECFF" Opacity="0.9"/>
-                <Rectangle Canvas.Left="58" Canvas.Top="172.5" Width="52" Height="2.2" RadiusX="1" RadiusY="1" Fill="#FFF3B0" Opacity="0.75"/>
-                <Rectangle Canvas.Left="58" Canvas.Top="177" Width="26" Height="2.2" RadiusX="1" RadiusY="1" Fill="#FFC4D6" Opacity="0.75"/>
-                <Rectangle Canvas.Left="58" Canvas.Top="181.5" Width="44" Height="2.2" RadiusX="1" RadiusY="1" Fill="#D6ECFF" Opacity="0.6"/>
+				<!-- Code lines on screen -->
+				<Rectangle Canvas.Left="58" Canvas.Top="168" Width="34" Height="2.2" RadiusX="1" RadiusY="1" Fill="#D6ECFF" Opacity="0.9"/>
+				<Rectangle Canvas.Left="58" Canvas.Top="172.5" Width="52" Height="2.2" RadiusX="1" RadiusY="1" Fill="#FFF3B0" Opacity="0.75"/>
+				<Rectangle Canvas.Left="58" Canvas.Top="177" Width="26" Height="2.2" RadiusX="1" RadiusY="1" Fill="#FFC4D6" Opacity="0.75"/>
+				<Rectangle Canvas.Left="58" Canvas.Top="181.5" Width="44" Height="2.2" RadiusX="1" RadiusY="1" Fill="#D6ECFF" Opacity="0.6"/>
 
-                <!-- Glossy screen highlight -->
-                <Rectangle Canvas.Left="53.5" Canvas.Top="165" Width="93" Height="21" RadiusX="2.5" RadiusY="2.5" Opacity="0.22" IsHitTestVisible="False">
-                    <Rectangle.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0.7,1">
-                            <GradientStop Color="White" Offset="0"/>
-                            <GradientStop Color="Transparent" Offset="0.5"/>
-                        </LinearGradientBrush>
-                    </Rectangle.Fill>
-                </Rectangle>
+				<!-- Glossy screen highlight -->
+				<Rectangle Canvas.Left="53.5" Canvas.Top="165" Width="93" Height="21" RadiusX="2.5" RadiusY="2.5" Opacity="0.22" IsHitTestVisible="False">
+					<Rectangle.Fill>
+						<LinearGradientBrush StartPoint="0,0" EndPoint="0.7,1">
+							<GradientStop Color="White" Offset="0"/>
+							<GradientStop Color="Transparent" Offset="0.5"/>
+						</LinearGradientBrush>
+					</Rectangle.Fill>
+				</Rectangle>
 
-                <!-- ===== Hinge ===== -->
-                <Rectangle Canvas.Left="45" Canvas.Top="189.5" Width="110" Height="3.5"
+				<!-- ===== Hinge ===== -->
+				<Rectangle Canvas.Left="45" Canvas.Top="189.5" Width="110" Height="3.5"
 						   RadiusX="1.75" RadiusY="1.75">
-                    <Rectangle.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#B7BABF" Offset="0"/>
-                            <GradientStop Color="#9A9DA2" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Rectangle.Fill>
-                </Rectangle>
+					<Rectangle.Fill>
+						<LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+							<GradientStop Color="#B7BABF" Offset="0"/>
+							<GradientStop Color="#9A9DA2" Offset="1"/>
+						</LinearGradientBrush>
+					</Rectangle.Fill>
+				</Rectangle>
 
-                <!-- ===== Deck (keyboard base, perspective) ===== -->
-                <!-- Front lip / thickness -->
-                <Rectangle Canvas.Left="33" Canvas.Top="201.5" Width="134" Height="6"
+				<!-- ===== Deck (keyboard base, perspective) ===== -->
+				<!-- Front lip / thickness -->
+				<Rectangle Canvas.Left="33" Canvas.Top="201.5" Width="134" Height="6"
 						   RadiusX="3" RadiusY="3" Fill="#A7ABB0"/>
-                <!-- Top deck surface (trapezoid, wider at front) -->
-                <Polygon Points="47,192 153,192 165,203 35,203" Stroke="#AEB2B7" StrokeThickness="1">
-                    <Polygon.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#EAECEE" Offset="0"/>
-                            <GradientStop Color="#CCCFD3" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Polygon.Fill>
-                </Polygon>
+				<!-- Top deck surface (trapezoid, wider at front) -->
+				<Polygon Points="47,192 153,192 165,203 35,203" Stroke="#AEB2B7" StrokeThickness="1">
+					<Polygon.Fill>
+						<LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+							<GradientStop Color="#EAECEE" Offset="0"/>
+							<GradientStop Color="#CCCFD3" Offset="1"/>
+						</LinearGradientBrush>
+					</Polygon.Fill>
+				</Polygon>
 
-                <!-- Keyboard keys (row 1) -->
-                <Rectangle Canvas.Left="57"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="65"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="73"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="81"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="89"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="97"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="105" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="113" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="121" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="129" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="137" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <!-- Keyboard keys (row 2) -->
-                <Rectangle Canvas.Left="61"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="69"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="77"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="85"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="93"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="101" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="109" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="117" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="125" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
-                <Rectangle Canvas.Left="133" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<!-- Keyboard keys (row 1) -->
+				<Rectangle Canvas.Left="57"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="65"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="73"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="81"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="89"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="97"  Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="105" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="113" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="121" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="129" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="137" Canvas.Top="193.6" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<!-- Keyboard keys (row 2) -->
+				<Rectangle Canvas.Left="61"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="69"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="77"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="85"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="93"  Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="101" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="109" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="117" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="125" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
+				<Rectangle Canvas.Left="133" Canvas.Top="196.2" Width="5" Height="2.2" RadiusX="0.7" RadiusY="0.7" Fill="#42464C"/>
 
-                <!-- Trackpad -->
-                <Rectangle Canvas.Left="86" Canvas.Top="198.6" Width="28" Height="4.2"
+				<!-- Trackpad -->
+				<Rectangle Canvas.Left="86" Canvas.Top="198.6" Width="28" Height="4.2"
 						   RadiusX="1.4" RadiusY="1.4" Fill="#DADDE0" Stroke="#B4B7BB" StrokeThickness="0.6"/>
-            </Canvas>
+			</Canvas>
 
-            <!-- Status indicator dot (doubles as a pulsing, clickable update badge) -->
-            <Ellipse x:Name="StatusDot" Canvas.Left="170" Canvas.Top="10" Width="12" Height="12"
+			<!-- Status indicator dot (doubles as a pulsing, clickable update badge) -->
+			<Ellipse x:Name="StatusDot" Canvas.Left="170" Canvas.Top="10" Width="12" Height="12"
 					 Stroke="White" StrokeThickness="1.5" ToolTip="대기 중"
 					 RenderTransformOrigin="0.5,0.5" Cursor="Hand"
 					 MouseLeftButtonDown="StatusDot_Click">
-                <Ellipse.RenderTransform>
-                    <ScaleTransform x:Name="UpdateBadgeScale" ScaleX="1" ScaleY="1"/>
-                </Ellipse.RenderTransform>
-                <Ellipse.Fill>
-                    <SolidColorBrush x:Name="StatusDotFill" Color="#888888"/>
-                </Ellipse.Fill>
-            </Ellipse>
-        </Canvas>
+				<Ellipse.RenderTransform>
+					<ScaleTransform x:Name="UpdateBadgeScale" ScaleX="1" ScaleY="1"/>
+				</Ellipse.RenderTransform>
+				<Ellipse.Fill>
+					<SolidColorBrush x:Name="StatusDotFill" Color="#888888"/>
+				</Ellipse.Fill>
+			</Ellipse>
+		</Canvas>
 
-        <!-- ===== Speech bubble (top area, does not bob with the character) ===== -->
-        <Canvas x:Name="SpeechBubble" Opacity="0" Cursor="Hand"
+		<!-- ===== Activity badge: shows what tool Claude Code is using (Segoe MDL2 glyph) ===== -->
+		<Canvas x:Name="ActivityBadge" Canvas.Left="14" Canvas.Top="62" Opacity="0" RenderTransformOrigin="0.5,0.5">
+			<Canvas.RenderTransform>
+				<ScaleTransform x:Name="ActivityScale" ScaleX="1" ScaleY="1" CenterX="15" CenterY="15"/>
+			</Canvas.RenderTransform>
+			<Border Width="30" Height="30" CornerRadius="15"
+					Background="{DynamicResource LimbStrokeBrush}" BorderBrush="White" BorderThickness="1.5">
+				<Border.Effect>
+					<DropShadowEffect Color="#40000000" BlurRadius="6" ShadowDepth="1" Direction="270"/>
+				</Border.Effect>
+				<TextBlock x:Name="ActivityGlyph" FontFamily="Segoe MDL2 Assets" FontSize="14"
+						   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+						   Text="&#xE756;"/>
+			</Border>
+		</Canvas>
+
+		<!-- ===== Speech bubble (top area, does not bob with the character) ===== -->
+		<Canvas x:Name="SpeechBubble" Opacity="0" Cursor="Hand"
 				MouseLeftButtonDown="SpeechBubble_Click">
-            <Canvas.RenderTransform>
-                <ScaleTransform x:Name="BubbleScale" ScaleX="1" ScaleY="1" CenterX="110" CenterY="46"/>
-            </Canvas.RenderTransform>
+			<Canvas.RenderTransform>
+				<ScaleTransform x:Name="BubbleScale" ScaleX="1" ScaleY="1" CenterX="110" CenterY="46"/>
+			</Canvas.RenderTransform>
 
-            <!-- Tail (diamond); its top is repositioned in code to hug the bubble's bottom edge -->
-            <Rectangle x:Name="BubbleTail" Canvas.Left="103" Canvas.Top="34" Width="14" Height="14"
+			<!-- Tail (diamond); its top is repositioned in code to hug the bubble's bottom edge -->
+			<Rectangle x:Name="BubbleTail" Canvas.Left="103" Canvas.Top="34" Width="14" Height="14"
 					   Fill="White" Stroke="#E4E4E7" StrokeThickness="1" RenderTransformOrigin="0.5,0.5">
-                <Rectangle.RenderTransform>
-                    <RotateTransform Angle="45"/>
-                </Rectangle.RenderTransform>
-            </Rectangle>
+				<Rectangle.RenderTransform>
+					<RotateTransform Angle="45"/>
+				</Rectangle.RenderTransform>
+			</Rectangle>
 
-            <!-- Bubble body -->
-            <Border x:Name="BubbleBorder" Canvas.Left="12" Canvas.Top="6" Width="196"
+			<!-- Bubble body -->
+			<Border x:Name="BubbleBorder" Canvas.Left="12" Canvas.Top="6" Width="196"
 					Background="White" CornerRadius="13" BorderBrush="#E4E4E7" BorderThickness="1"
 					Padding="12,8">
-                <Border.Effect>
-                    <DropShadowEffect Color="#40000000" BlurRadius="12" ShadowDepth="2" Direction="270"/>
-                </Border.Effect>
-                <TextBlock x:Name="SpeechText" TextWrapping="Wrap" TextAlignment="Center"
+				<Border.Effect>
+					<DropShadowEffect Color="#40000000" BlurRadius="12" ShadowDepth="2" Direction="270"/>
+				</Border.Effect>
+				<TextBlock x:Name="SpeechText" TextWrapping="Wrap" TextAlignment="Center"
 						   FontSize="12.5" FontWeight="SemiBold" Foreground="#2D2D2D"
 						   FontFamily="Segoe UI, Malgun Gothic, Segoe UI Emoji" Text="안녕하세요!"/>
-            </Border>
-        </Canvas>
-    </Canvas>
+			</Border>
+		</Canvas>
+	</Canvas>
 </Window>

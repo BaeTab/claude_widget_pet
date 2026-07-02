@@ -21,6 +21,9 @@ namespace Claude_Widget.Services
         public bool AutoUpdate { get; set; } = true;
         public bool StartWithWindows { get; set; } = false;
 
+        /// <summary>Show per-tool activity (badge + label) from PreToolUse hooks.</summary>
+        public bool ToolAwareness { get; set; } = true;
+
         // --- Usage stats ---
         /// <summary>Date (yyyy-MM-dd) the WorkSecondsToday counter belongs to.</summary>
         public string StatsDate { get; set; } = "";

@@ -8,18 +8,15 @@ namespace Claude_Widget.Services
     /// <summary>
     /// Turns the widget executable into its own Claude Code hook handler.
     ///
-    /// Claude Code can be configured to run a command on lifecycle events
-    /// (Notification, Stop, SubagentStop). We register `ClaudeWidget.exe --hook`
-    /// as that command. When invoked, the CLI pipes a JSON payload on stdin; we
-    /// distill it into a short, friendly line and drop it into an "inbox" folder.
-    /// The running widget watches that folder (<see cref="CliMessageService"/>) and
-    /// pops the line up as a speech bubble.
-    ///
-    /// `--notify "text"` is a simpler entry point for manual/testing use.
+    /// Claude Code runs <c>ClaudeWidget.exe --hook</c> on lifecycle events and pipes a
+    /// JSON payload on stdin. We distill that into a small <see cref="CliEvent"/> and drop
+    /// it (as JSON) into an "inbox" folder. The running widget watches the folder
+    /// (<see cref="CliMessageService"/>) and reacts — a speech bubble, a tool activity
+    /// badge, a tray toast, etc. <c>--notify "text"</c> is a simple manual/testing entry point.
     /// </summary>
     public static class CliHookService
     {
-        /// <summary>%APPDATA%\ClaudeWidget\inbox — one file per pending message.</summary>
+        /// <summary>%APPDATA%\ClaudeWidget\inbox — one JSON file per pending event.</summary>
         public static string InboxDirectory
         {
             get
@@ -30,29 +27,35 @@ namespace Claude_Widget.Services
             }
         }
 
-        /// <summary>Reads a hook payload from stdin and writes a friendly message to the inbox.</summary>
+        /// <summary>Reads a hook payload from stdin and writes a distilled event to the inbox.</summary>
         public static void HandleHookFromStdin()
         {
             string raw;
             try
             {
-                raw = Console.In.ReadToEnd();
+                // Claude Code pipes UTF-8 JSON. Read the raw stdin stream as UTF-8 explicitly —
+                // Console.In would otherwise decode with the console code page and mangle
+                // non-ASCII (e.g. Korean) in the payload.
+                using var reader = new StreamReader(
+                    Console.OpenStandardInput(), new UTF8Encoding(false));
+                raw = reader.ReadToEnd();
             }
             catch
             {
                 return;
             }
 
-            string message = ComposeMessage(raw);
-            if (!string.IsNullOrWhiteSpace(message))
-                WriteMessage(message);
+            CliEvent? ev = Compose(raw);
+            if (ev != null)
+                WriteEvent(ev);
         }
 
-        /// <summary>Distills a Claude Code hook JSON payload into a short display line.</summary>
-        public static string ComposeMessage(string rawJson)
+        /// <summary>Distills a Claude Code hook JSON payload into a <see cref="CliEvent"/>, or null to ignore.</summary>
+        public static CliEvent? Compose(string rawJson)
         {
             string eventName = "";
             string notifText = "";
+            string tool = "";
 
             if (!string.IsNullOrWhiteSpace(rawJson))
             {
@@ -64,41 +67,68 @@ namespace Claude_Widget.Services
                         eventName = ev.GetString() ?? "";
                     if (root.TryGetProperty("message", out var msg))
                         notifText = msg.GetString() ?? "";
+                    if (root.TryGetProperty("tool_name", out var tn))
+                        tool = tn.GetString() ?? "";
                 }
                 catch
                 {
-                    // Malformed JSON: don't dump the raw blob. Only treat stdin as a plain
-                    // message when it clearly isn't JSON (e.g. someone piped plain text).
-                    string trimmed = rawJson.Trim();
-                    notifText = (trimmed.StartsWith("{") || trimmed.StartsWith("[")) ? "" : trimmed;
+                    // Malformed JSON: treat clearly-non-JSON stdin as plain text, else ignore.
+                    string t = rawJson.Trim();
+                    if (t.StartsWith("{") || t.StartsWith("["))
+                        return null;
+                    return new CliEvent { Kind = "text", Text = Truncate(t, 140) };
                 }
             }
 
-            string text = eventName switch
+            return eventName switch
             {
-                "Notification" => string.IsNullOrWhiteSpace(notifText) ? "클로드가 기다리고 있어요" : "알림: " + notifText,
-                "Stop" => "작업을 마쳤어요!",
-                "SubagentStop" => "서브 작업 완료",
-                "SessionStart" => "세션 시작! 함께 코딩해요",
-                "SessionEnd" => "세션 종료. 수고했어요!",
-                _ => !string.IsNullOrWhiteSpace(notifText) ? notifText
-                    : (!string.IsNullOrWhiteSpace(eventName) ? eventName : "")
+                "PreToolUse" => new CliEvent { Kind = "tool", Tool = tool, Text = ToolLabel(tool) },
+                "UserPromptSubmit" => new CliEvent { Kind = "prompt", Text = "요청 받았어요!" },
+                "Notification" => new CliEvent
+                {
+                    Kind = "notify",
+                    Text = string.IsNullOrWhiteSpace(notifText) ? "클로드가 기다리고 있어요" : Truncate(notifText, 140)
+                },
+                "Stop" => new CliEvent { Kind = "stop", Text = "작업을 마쳤어요!" },
+                "SubagentStop" => new CliEvent { Kind = "substop", Text = "서브 작업 완료" },
+                "SessionStart" => new CliEvent { Kind = "session", Text = "세션 시작! 함께 코딩해요" },
+                "SessionEnd" => new CliEvent { Kind = "session", Text = "세션 종료. 수고했어요!" },
+                _ when !string.IsNullOrWhiteSpace(notifText) => new CliEvent { Kind = "text", Text = Truncate(notifText, 140) },
+                _ => null,
             };
-
-            return Truncate(text, 140);
         }
 
-        /// <summary>Writes a single message file into the inbox (best-effort).</summary>
-        public static void WriteMessage(string text)
+        /// <summary>Friendly Korean label for a Claude Code tool name.</summary>
+        public static string ToolLabel(string tool) => tool switch
+        {
+            "Read" or "NotebookRead" => "파일 읽는 중…",
+            "Edit" or "MultiEdit" or "Write" or "NotebookEdit" => "코드 쓰는 중…",
+            "Bash" or "BashOutput" or "KillShell" => "명령 실행 중…",
+            "Glob" => "파일 찾는 중…",
+            "Grep" => "코드 검색 중…",
+            "WebFetch" => "웹 읽는 중…",
+            "WebSearch" => "웹 검색 중…",
+            "Task" => "에이전트 실행 중…",
+            "TodoWrite" => "할 일 정리 중…",
+            _ when tool.StartsWith("mcp__", StringComparison.OrdinalIgnoreCase) => "도구 사용 중…",
+            _ => "작업 중…",
+        };
+
+        /// <summary>Writes a plain text event (used by <c>--notify</c>).</summary>
+        public static void WriteText(string text) =>
+            WriteEvent(new CliEvent { Kind = "text", Text = Truncate(text, 140) });
+
+        private static void WriteEvent(CliEvent ev)
         {
             try
             {
-                string name = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}.txt";
-                File.WriteAllText(Path.Combine(InboxDirectory, name), text, new UTF8Encoding(false));
+                string json = JsonSerializer.Serialize(ev);
+                string name = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}.json";
+                File.WriteAllText(Path.Combine(InboxDirectory, name), json, new UTF8Encoding(false));
             }
             catch
             {
-                // Ignore — a dropped notification should never surface an error.
+                // A dropped notification should never surface an error.
             }
         }
 
