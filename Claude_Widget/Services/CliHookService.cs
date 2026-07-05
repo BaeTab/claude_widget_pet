@@ -56,6 +56,9 @@ namespace Claude_Widget.Services
             string eventName = "";
             string notifText = "";
             string tool = "";
+            string sessionId = "";
+            string cwd = "";
+            string transcript = "";
 
             if (!string.IsNullOrWhiteSpace(rawJson))
             {
@@ -69,6 +72,13 @@ namespace Claude_Widget.Services
                         notifText = msg.GetString() ?? "";
                     if (root.TryGetProperty("tool_name", out var tn))
                         tool = tn.GetString() ?? "";
+                    // Session identity — present on every hook payload.
+                    if (root.TryGetProperty("session_id", out var sid))
+                        sessionId = sid.GetString() ?? "";
+                    if (root.TryGetProperty("cwd", out var cw))
+                        cwd = cw.GetString() ?? "";
+                    if (root.TryGetProperty("transcript_path", out var tp))
+                        transcript = tp.GetString() ?? "";
                 }
                 catch
                 {
@@ -80,7 +90,7 @@ namespace Claude_Widget.Services
                 }
             }
 
-            return eventName switch
+            CliEvent? ev2 = eventName switch
             {
                 "PreToolUse" => new CliEvent { Kind = "tool", Tool = tool, Text = ToolLabel(tool) },
                 "UserPromptSubmit" => new CliEvent { Kind = "prompt", Text = "요청 받았어요!" },
@@ -91,11 +101,19 @@ namespace Claude_Widget.Services
                 },
                 "Stop" => new CliEvent { Kind = "stop", Text = "작업을 마쳤어요!" },
                 "SubagentStop" => new CliEvent { Kind = "substop", Text = "서브 작업 완료" },
-                "SessionStart" => new CliEvent { Kind = "session", Text = "세션 시작! 함께 코딩해요" },
-                "SessionEnd" => new CliEvent { Kind = "session", Text = "세션 종료. 수고했어요!" },
+                "SessionStart" => new CliEvent { Kind = "session_start", Text = "세션 시작! 함께 코딩해요" },
+                "SessionEnd" => new CliEvent { Kind = "session_end", Text = "세션 종료. 수고했어요!" },
                 _ when !string.IsNullOrWhiteSpace(notifText) => new CliEvent { Kind = "text", Text = Truncate(notifText, 140) },
                 _ => null,
             };
+
+            if (ev2 != null)
+            {
+                if (!string.IsNullOrWhiteSpace(sessionId)) ev2.SessionId = sessionId;
+                if (!string.IsNullOrWhiteSpace(cwd)) ev2.Cwd = cwd;
+                if (!string.IsNullOrWhiteSpace(transcript)) ev2.TranscriptPath = transcript;
+            }
+            return ev2;
         }
 
         /// <summary>Friendly Korean label for a Claude Code tool name.</summary>

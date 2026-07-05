@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -25,14 +26,39 @@ namespace Claude_Widget
         private DispatcherTimer _updateCheckTimer = null!;
         private DispatcherTimer _activityHideTimer = null!;
         private DispatcherTimer _breakTimer = null!;
+        private DispatcherTimer _pruneTimer = null!;
         private readonly Random _random = new();
         private bool _isWorking;
-        private bool _wasWorking;
         private bool _breakNudged;
 
+        // Multi-session tracking: the registry aggregates every concurrent Claude Code
+        // session; the character reflects the fleet's most-urgent state and the chip
+        // strip lists each session. _effectiveState is the last state the UI rendered.
+        private readonly SessionRegistry _registry = new();
+        private SessionState _effectiveState = SessionState.Idle;
+
+        // Expression/idle state: the character dozes off after a long quiet stretch.
+        private bool _sleeping;
+        private DateTime? _idleSince;
+        private const int SleepAfterMinutes = 3;
+
+        // Session dashboard (HUD): per-session cost from the transcript + aggregate system usage.
+        private DispatcherTimer _costTimer = null!;
+        private DispatcherTimer _hudTimer = null!;
+        private bool _hudOpen;
+        private bool _demoMode;
+        private readonly List<int> _claudePids = new();
+        private readonly TranscriptUsageReader _usageReader = new();
+        private readonly SystemUsageSampler _sysSampler = new();
+
         // --- Enhanced state ---
-        private const double BaseWidth = 220;
-        private const double BaseHeight = 300;
+        // Window is wider than the 220-wide character so the session strip has room;
+        // the character canvas is centered within it.
+        private const double BaseWidth = 300;
+        private const double BaseHeight = 332;
+
+        // Chips shown before collapsing the remainder into a "+N" pill.
+        private const int MaxVisibleChips = 3;
 
         private WidgetSettings _settings = new();
         private System.Windows.Forms.NotifyIcon? _trayIcon;
@@ -57,199 +83,9 @@ namespace Claude_Widget
             "오늘도 좋은 하루", "무엇을 만들어볼까요?", "잠깐 쉬어도 괜찮아요",
         };
 
-        // NOTE: As of the 2026 Claude Code update, the CLI ships a native launcher
-        // installed at "<npm-prefix>/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-        // that re-execs node internally. Older installs still spawn raw node.exe with the
-        // cli.js script. Both shapes are handled below:
-        //   - "claude" baseName: confirm via image path (must contain claude-code) so the
-        //     Anthropic *desktop* chat app (also Claude.exe, but installed under
-        //     %LOCALAPPDATA%\AnthropicClaude\...) is not a false positive.
-        //   - "node"/"bun"/"deno" baseName: peek the command line via PEB and match hints.
-        // The literal "claude-cli" entry is kept harmless for any future renaming.
-        private static readonly string[] ClaudeCliProcessNames = [
-            "claude-cli",
-        ];
-
-        // Substrings in a "claude.exe" image path that confirm it is the Claude Code CLI
-        // rather than the Anthropic desktop chat app.
-        private static readonly string[] ClaudeCliImagePathHints = [
-            "claude-code\\bin",
-            "claude-code/bin",
-            "@anthropic-ai\\claude-code",
-            "@anthropic-ai/claude-code",
-        ];
-
-        // Substrings that, when found in a process's command line, indicate Claude CLI is running.
-        private static readonly string[] ClaudeCliCommandLineHints = [
-            "claude-code",
-            "@anthropic-ai/claude-code",
-            "\\claude\\cli.js",
-            "/claude/cli.js",
-            "\\.claude\\",
-            "/.claude/",
-            "claude.js",
-        ];
-
-        // --- Win32 P/Invoke for reading a process's command line from its PEB ---
-        // This is used instead of WMI's Win32_Process.CommandLine, which returns empty
-        // under some Windows 11 / .NET System.Management configurations even though
-        // PowerShell's Get-CimInstance succeeds in the same user session.
-        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-        private const uint PROCESS_VM_READ = 0x0010;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct PROCESS_BASIC_INFORMATION
-        {
-            public IntPtr Reserved1;
-            public IntPtr PebBaseAddress;
-            public IntPtr Reserved2_0;
-            public IntPtr Reserved2_1;
-            public IntPtr UniqueProcessId;
-            public IntPtr InheritedFromUniqueProcessId;
-        }
-
-        [DllImport("ntdll.dll")]
-        private static extern int NtQueryInformationProcess(
-            IntPtr processHandle, int processInformationClass,
-            ref PROCESS_BASIC_INFORMATION processInformation,
-            int processInformationLength, out int returnLength);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool CloseHandle(IntPtr hObject);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool ReadProcessMemory(
-            IntPtr hProcess, IntPtr lpBaseAddress,
-            byte[] lpBuffer, IntPtr nSize, out IntPtr lpNumberOfBytesRead);
-
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW")]
-        private static extern bool QueryFullProcessImageName(
-            IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
-
-        /// <summary>
-        /// Returns the full image path (.exe) for a process using only
-        /// PROCESS_QUERY_LIMITED_INFORMATION, which avoids the ACCESS_DENIED
-        /// problems that PROCESS_VM_READ-based PEB walks routinely hit.
-        /// </summary>
-        private static string? TryGetProcessImagePath(int pid)
-        {
-            IntPtr hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-            if (hProcess == IntPtr.Zero)
-                return null;
-            try
-            {
-                var sb = new StringBuilder(1024);
-                uint capacity = (uint)sb.Capacity;
-                if (!QueryFullProcessImageName(hProcess, 0, sb, ref capacity))
-                    return null;
-                return sb.ToString();
-            }
-            finally
-            {
-                CloseHandle(hProcess);
-            }
-        }
-
-        /// <summary>
-        /// Reads the CommandLine of another process by walking its PEB.
-        /// Returns null on failure; when `reason` is non-null, it contains a short diagnostic
-        /// tag pinpointing which step failed (for logging).
-        /// </summary>
-        private static string? TryReadCommandLineFromPeb(int pid, out string reason)
-        {
-            reason = string.Empty;
-            IntPtr hProcess = OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid);
-            if (hProcess == IntPtr.Zero)
-            {
-                reason = $"OpenProcess(win32err={Marshal.GetLastWin32Error()})";
-                return null;
-            }
-
-            try
-            {
-                var pbi = new PROCESS_BASIC_INFORMATION();
-                int status = NtQueryInformationProcess(
-                    hProcess, 0, ref pbi,
-                    Marshal.SizeOf<PROCESS_BASIC_INFORMATION>(), out _);
-                if (status != 0)
-                {
-                    reason = $"NtQueryInfo(ntstatus=0x{status:X8})";
-                    return null;
-                }
-                if (pbi.PebBaseAddress == IntPtr.Zero)
-                {
-                    reason = "PebBaseAddress=null (likely WOW64 mismatch)";
-                    return null;
-                }
-
-                // PEB layout (x64): ProcessParameters pointer lives at offset 0x20.
-                if (!TryReadPointer(hProcess, pbi.PebBaseAddress + 0x20, out IntPtr pp))
-                {
-                    reason = $"RPM(PEB+0x20 err={Marshal.GetLastWin32Error()})";
-                    return null;
-                }
-                if (pp == IntPtr.Zero)
-                {
-                    reason = "ProcessParameters=null";
-                    return null;
-                }
-
-                // RTL_USER_PROCESS_PARAMETERS (x64): CommandLine UNICODE_STRING at offset 0x70.
-                // UNICODE_STRING { USHORT Length; USHORT MaxLength; pad; PWSTR Buffer; } = 16 bytes on x64.
-                byte[] usBuf = new byte[16];
-                if (!ReadProcessMemory(hProcess, pp + 0x70, usBuf, (IntPtr)usBuf.Length, out _))
-                {
-                    reason = $"RPM(PP+0x70 err={Marshal.GetLastWin32Error()})";
-                    return null;
-                }
-
-                ushort length = BitConverter.ToUInt16(usBuf, 0);
-                if (length == 0)
-                    return string.Empty;
-                IntPtr bufPtr = new IntPtr(BitConverter.ToInt64(usBuf, 8));
-                if (bufPtr == IntPtr.Zero)
-                {
-                    reason = "CmdLine.Buffer=null";
-                    return null;
-                }
-
-                byte[] strBuf = new byte[length];
-                if (!ReadProcessMemory(hProcess, bufPtr, strBuf, (IntPtr)length, out _))
-                {
-                    reason = $"RPM(CmdLine.Buffer err={Marshal.GetLastWin32Error()})";
-                    return null;
-                }
-
-                return Encoding.Unicode.GetString(strBuf);
-            }
-            catch (Exception ex)
-            {
-                reason = $"ex:{ex.GetType().Name}:{ex.Message}";
-                return null;
-            }
-            finally
-            {
-                CloseHandle(hProcess);
-            }
-        }
-
-        private static bool TryReadPointer(IntPtr hProcess, IntPtr addr, out IntPtr value)
-        {
-            byte[] buf = new byte[IntPtr.Size];
-            if (!ReadProcessMemory(hProcess, addr, buf, (IntPtr)buf.Length, out _))
-            {
-                value = IntPtr.Zero;
-                return false;
-            }
-            value = IntPtr.Size == 8
-                ? new IntPtr(BitConverter.ToInt64(buf, 0))
-                : new IntPtr(BitConverter.ToInt32(buf, 0));
-            return true;
-        }
+        // Process detection (native claude.exe launcher + node/bun/deno cli.js via PEB) lives
+        // in a dedicated service, shared with the dashboard's resource sampler.
+        private readonly ClaudeProcessScanner _scanner = new();
 
         public MainWindow()
         {
@@ -296,13 +132,33 @@ namespace Claude_Widget
             StartStoryboard("BreathingAnimation");
             StartStoryboard("SparkleAnimation");
 
+            // Registry drives the character + chip strip; marshal its off-thread
+            // Changed notifications onto the dispatcher.
+            _registry.Changed += () => Dispatcher.BeginInvoke(ApplyEffectiveState);
+
             SetupTrayIcon();
             SetupCliMessages();
+            SeedDemoSessionsIfRequested();
 
             // Process detection timer (every 2 seconds)
             _processCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             _processCheckTimer.Tick += ProcessCheckTimer_Tick;
             _processCheckTimer.Start();
+
+            // Prune ended/stale sessions periodically.
+            _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _pruneTimer.Tick += (_, _) => _registry.Prune();
+            _pruneTimer.Start();
+
+            // Cost sampling: refresh each session's transcript-derived usage (cheap incremental
+            // reads) so the chip detail and dashboard show up-to-date estimates. Always on.
+            _costTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _costTimer.Tick += (_, _) => SampleCosts();
+            _costTimer.Start();
+
+            // Dashboard refresh: only runs while the HUD is open (resource sampling + rerender).
+            _hudTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _hudTimer.Tick += (_, _) => RefreshHud();
 
             // Idle action timer (random blinks, looks)
             _idleActionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -340,6 +196,14 @@ namespace Claude_Widget
 
             // Friendly hello on launch.
             ShowSpeech(PickRandom(IdleMessages), 3500);
+
+            // In demo/screenshot mode, optionally open the dashboard once layout settles
+            // (CLAUDEWIDGET_DEMO=hud). Plain CLAUDEWIDGET_DEMO=1 only seeds the sessions so the
+            // character/strip/expression can be captured on their own.
+            if (_demoMode &&
+                string.Equals(Environment.GetEnvironmentVariable("CLAUDEWIDGET_DEMO"), "hud",
+                    StringComparison.OrdinalIgnoreCase))
+                Dispatcher.BeginInvoke(new Action(OpenHud), DispatcherPriority.Background);
         }
 
         private async Task DelayThenCheckUpdatesAsync()
@@ -424,11 +288,17 @@ namespace Claude_Widget
 
         private void HandleCliEvent(CliEvent ev)
         {
+            // Feed the registry first: it updates the per-session state and (via Changed)
+            // re-derives the character's aggregate state and the chip strip. Returns false
+            // for global events (e.g. manual --notify) that carry no session id.
+            _registry.Apply(ev);
+
+            // Immediate, per-event feedback that shouldn't wait on aggregation.
             switch (ev.Kind)
             {
                 case "tool":
                     if (_settings.ToolAwareness)
-                        ShowActivity(ev.Tool ?? "", ev.Text);
+                        ShowActivity(ev.Tool ?? "", TagWithProject(ev, ev.Text));
                     break;
 
                 case "notify":
@@ -437,32 +307,45 @@ namespace Claude_Widget
                     HideActivity();
                     if (!IsVisible) Show();
                     StartStoryboard("WaveAnimation");
-                    ShowSpeech(ev.Text, 7000);
+                    ShowSpeech(TagWithProject(ev, ev.Text), 7000);
                     ShowTrayToast(ev.Text);
                     break;
 
                 case "prompt":
                     HideActivity();
                     StartStoryboard("IdleBounceAnimation");
-                    ShowSpeech(ev.Text, 2500);
+                    ShowSpeech(TagWithProject(ev, ev.Text), 2500);
                     break;
 
                 case "stop":
                     HideActivity();
-                    StartStoryboard("BlinkAnimation");
-                    ShowSpeech(ev.Text, 3000);
+                    Celebrate();
+                    ShowSpeech(TagWithProject(ev, ev.Text), 3000);
                     break;
 
                 case "substop":
-                case "session":
-                    ShowSpeech(ev.Text, 3000);
+                case "session_start":
+                case "session_end":
+                    ShowSpeech(TagWithProject(ev, ev.Text), 3000);
                     break;
 
-                default: // "text"
+                default: // "text" (global, e.g. manual --notify)
                     if (!IsVisible) Show();
                     ShowSpeech(ev.Text, 6500);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Prefixes a message with the project name when more than one session is active,
+        /// so a bubble tells you *which* session it's about (e.g. "imjangpro · 코드 쓰는 중…").
+        /// </summary>
+        private string TagWithProject(CliEvent ev, string text)
+        {
+            if (string.IsNullOrWhiteSpace(ev.SessionId) || _registry.Snapshot().ActiveCount <= 1)
+                return text;
+            string project = SessionRegistry.ProjectNameFromCwd(ev.Cwd);
+            return $"{project} · {text}";
         }
 
         // ===================== Tool activity badge =====================
@@ -520,48 +403,334 @@ namespace Claude_Widget
             catch { /* balloon is best-effort */ }
         }
 
+        // ===================== Session chip strip =====================
+
+        private static SolidColorBrush BrushOf(string hex) => new(Hex(hex));
+
+        /// <summary>State → dot colour (matches the character status dot).</summary>
+        private static Brush StateBrush(SessionState s) => s switch
+        {
+            SessionState.Waiting => BrushOf("#F5A623"),
+            SessionState.Working => BrushOf("#44BB44"),
+            SessionState.Idle => BrushOf("#9AA0A6"),
+            _ => BrushOf("#C8CCD0"),
+        };
+
+        private static string StateWord(SessionState s) => s switch
+        {
+            SessionState.Waiting => "확인 대기",
+            SessionState.Working => "작업 중",
+            SessionState.Idle => "대기",
+            _ => "종료",
+        };
+
+        /// <summary>Rebuilds the chip strip from a fleet snapshot (one pill per active session, then "+N").</summary>
+        private void RenderStrip(FleetSnapshot snap)
+        {
+            SessionStrip.Children.Clear();
+
+            var active = snap.Sessions.Where(s => s.State != SessionState.Ended).ToList();
+            if (active.Count == 0)
+            {
+                SessionStripHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            SessionStripHost.Visibility = Visibility.Visible;
+
+            foreach (var s in active.Take(MaxVisibleChips))
+                SessionStrip.Children.Add(BuildChip(s));
+
+            int overflow = active.Count - MaxVisibleChips;
+            if (overflow > 0)
+                SessionStrip.Children.Add(BuildOverflowChip(overflow));
+        }
+
+        private Border BuildChip(SessionInfo s)
+        {
+            var dot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = StateBrush(s.State),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 5, 0),
+            };
+            var label = new TextBlock
+            {
+                Text = s.ProjectName,
+                FontSize = 10.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = BrushOf("#2D2D2D"),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 66,
+                FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
+            };
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(dot);
+            content.Children.Add(label);
+
+            var chip = new Border
+            {
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(6, 2, 7, 3),
+                Margin = new Thickness(2, 0, 2, 0),
+                Background = Brushes.White,
+                BorderBrush = BrushOf("#E4E4E7"),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Tag = s.SessionId,
+                ToolTip = $"{s.ProjectName} · {s.StatusLabel}",
+                Child = content,
+            };
+            chip.MouseLeftButtonDown += Chip_Click;
+            return chip;
+        }
+
+        private Border BuildOverflowChip(int n)
+        {
+            var label = new TextBlock
+            {
+                Text = $"+{n}",
+                FontSize = 10.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = BrushOf("#6B7280"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var chip = new Border
+            {
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(7, 2, 8, 3),
+                Margin = new Thickness(2, 0, 2, 0),
+                Background = BrushOf("#F3F4F6"),
+                BorderBrush = BrushOf("#E4E4E7"),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                ToolTip = $"그 외 {n}개 세션",
+                Child = label,
+            };
+            chip.MouseLeftButtonDown += (_, e) => { e.Handled = true; ShowAllSessionsSummary(); };
+            return chip;
+        }
+
+        private void Chip_Click(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            if (sender is FrameworkElement fe && fe.Tag is string sid)
+                ShowSessionDetail(sid);
+        }
+
+        private void ShowSessionDetail(string sessionId)
+        {
+            var s = _registry.Snapshot().Sessions.FirstOrDefault(x => x.SessionId == sessionId);
+            if (s == null)
+                return;
+            string elapsed = FormatElapsed(DateTime.Now - s.StartedAt);
+            string label = string.IsNullOrWhiteSpace(s.StatusLabel) ? StateWord(s.State) : s.StatusLabel;
+            ShowSpeech($"{s.ProjectName} · {StateWord(s.State)}\n{label} · {elapsed}", 4500);
+        }
+
+        private void ShowAllSessionsSummary() => OpenHud();
+
+        private static string FormatElapsed(TimeSpan t)
+        {
+            if (t.TotalMinutes < 1) return $"{(int)t.TotalSeconds}초";
+            if (t.TotalHours < 1) return $"{(int)t.TotalMinutes}분";
+            return $"{(int)t.TotalHours}시간 {t.Minutes}분";
+        }
+
+        // ===================== Session dashboard (HUD) =====================
+
+        private void ShowHud_Click(object sender, RoutedEventArgs e) => OpenHud();
+
+        private void ToggleHud()
+        {
+            if (_hudOpen) CloseHud();
+            else OpenHud();
+        }
+
+        private void OpenHud()
+        {
+            _hudOpen = true;
+            SampleCosts();
+            RenderHud(_registry.Snapshot(), default);
+            HudPopup.IsOpen = true;
+            _hudTimer.Start();
+            // Kick a full (all-pids) scan now so the resource footer fills promptly.
+            CheckClaudeProcess();
+            RefreshHud();
+        }
+
+        private void CloseHud()
+        {
+            _hudOpen = false;
+            _hudTimer.Stop();
+            HudPopup.IsOpen = false;
+        }
+
+        private void HudPopup_Closed(object? sender, EventArgs e)
+        {
+            // Fires when the popup dismisses itself (click-away / StaysOpen=False).
+            _hudOpen = false;
+            _hudTimer.Stop();
+        }
+
+        /// <summary>Refreshes each active session's transcript-derived usage into the registry.</summary>
+        private void SampleCosts()
+        {
+            var activePaths = new List<string>();
+            foreach (var s in _registry.Snapshot().Sessions)
+            {
+                if (s.State == SessionState.Ended || string.IsNullOrWhiteSpace(s.TranscriptPath))
+                    continue;
+                activePaths.Add(s.TranscriptPath!);
+                UsageTotals? u = _usageReader.Read(s.TranscriptPath);
+                if (u != null)
+                    _registry.UpdateUsage(s.SessionId, u.TokensIn, u.TokensOut, u.CostUsd);
+            }
+            _usageReader.Forget(activePaths);
+        }
+
+        /// <summary>Dashboard tick: sample aggregate system usage and re-render (HUD open only).</summary>
+        private void RefreshHud()
+        {
+            if (!_hudOpen)
+                return;
+            UsageSample res = _demoMode ? DemoSample() : _sysSampler.Sample(_claudePids);
+            SampleCosts();
+            RenderHud(_registry.Snapshot(), res);
+        }
+
+        /// <summary>Plausible resource numbers for demo/screenshot mode (no live CLIs to sample).</summary>
+        private static UsageSample DemoSample() => new()
+        {
+            CpuPercent = 34.0 * Math.Max(1, Environment.ProcessorCount),
+            RamBytes = (long)(1.9 * 1024 * 1024 * 1024),
+            ProcessCount = 5,
+        };
+
+        private void RenderHud(FleetSnapshot snap, UsageSample res)
+        {
+            HudRows.Children.Clear();
+
+            var active = snap.Sessions.Where(s => s.State != SessionState.Ended).ToList();
+            if (active.Count == 0)
+            {
+                HudRows.Children.Add(new TextBlock
+                {
+                    Text = "실행 중인 세션이 없어요",
+                    FontSize = 11.5,
+                    Foreground = BrushOf("#9AA0A6"),
+                    FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
+                });
+            }
+            else
+            {
+                foreach (var s in active)
+                    HudRows.Children.Add(BuildHudRow(s));
+            }
+
+            double machineCpu = SystemUsageSampler.ToMachinePercent(res.CpuPercent);
+            string ram = SystemUsageSampler.FormatRam(res.RamBytes);
+
+            EnsureStatsDate();
+            double todayMin = Math.Round(_settings.WorkSecondsToday / 60.0);
+            double totalHr = Math.Round(_settings.WorkSecondsTotal / 3600.0, 1);
+
+            HudFooter.Text =
+                $"Claude 프로세스 {res.ProcessCount}개 · CPU {machineCpu:0}% · RAM {ram}\n" +
+                $"오늘 {todayMin:0}분 · 누적 {totalHr:0.#}시간 함께했어요";
+        }
+
+        private FrameworkElement BuildHudRow(SessionInfo s)
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });   // dot
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // project
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // elapsed
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });    // cost
+
+            var dot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 9,
+                Height = 9,
+                Fill = StateBrush(s.State),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            Grid.SetColumn(dot, 0);
+
+            var name = new TextBlock
+            {
+                Text = s.ProjectName,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = BrushOf("#2D2D2D"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
+                ToolTip = string.IsNullOrWhiteSpace(s.StatusLabel) ? StateWord(s.State) : s.StatusLabel,
+            };
+            Grid.SetColumn(name, 1);
+
+            var meta = new TextBlock
+            {
+                Text = FormatElapsed(DateTime.Now - s.StartedAt),
+                FontSize = 10.5,
+                Foreground = BrushOf("#9AA0A6"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(6, 0, 6, 0),
+                FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
+            };
+            Grid.SetColumn(meta, 2);
+
+            var cost = new TextBlock
+            {
+                Text = s.EstimatedCostUsd > 0 ? $"${s.EstimatedCostUsd:0.00}" : "—",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = BrushOf("#4B5563"),
+                TextAlignment = TextAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
+                ToolTip = s.TokensIn + s.TokensOut > 0
+                    ? $"입력 {s.TokensIn:N0} · 출력 {s.TokensOut:N0} 토큰 (예상 비용)"
+                    : "토큰 데이터 없음",
+            };
+            Grid.SetColumn(cost, 3);
+
+            row.Children.Add(dot);
+            row.Children.Add(name);
+            row.Children.Add(meta);
+            row.Children.Add(cost);
+            return row;
+        }
+
+        /// <summary>
+        /// For docs/screenshots: CLAUDEWIDGET_DEMO seeds a few fake sessions so the strip and
+        /// aggregate state can be captured without live Claude Code CLIs. Unset for normal use.
+        /// </summary>
+        private void SeedDemoSessionsIfRequested()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CLAUDEWIDGET_DEMO")))
+                return;
+
+            _demoMode = true;
+            _registry.Apply(new CliEvent { Kind = "tool", Tool = "Write", Text = "코드 쓰는 중…", SessionId = "demo-1", Cwd = @"C:\src\imjangpro" });
+            _registry.Apply(new CliEvent { Kind = "tool", Tool = "Bash", Text = "명령 실행 중…", SessionId = "demo-2", Cwd = @"C:\src\claude_widget" });
+            _registry.Apply(new CliEvent { Kind = "notify", Text = "권한 확인을 기다려요", SessionId = "demo-3", Cwd = @"C:\src\blog-api" });
+            // Fake usage so the dashboard has costs to render in screenshots.
+            _registry.UpdateUsage("demo-1", 128_000, 42_000, 0.61);
+            _registry.UpdateUsage("demo-2", 36_000, 9_500, 0.14);
+            _registry.UpdateUsage("demo-3", 210_000, 71_000, 1.06);
+        }
+
         // ===================== Process detection =====================
 
         private void ProcessCheckTimer_Tick(object? sender, EventArgs e)
         {
             CheckClaudeProcess();
-        }
-
-        private static bool IsScriptRunnerName(string baseName) =>
-            baseName is "node" or "bun" or "deno";
-
-        private static readonly string DebugLogPath =
-            Path.Combine(Path.GetTempPath(), "ClaudeWidget.log");
-
-        // Verbose process-detection tracing. This runs on every 2-second timer
-        // tick and writes one line per candidate process, so it grew
-        // %TEMP%\ClaudeWidget.log to multiple GB when left enabled. Keep it OFF
-        // for normal use; flip to true only while diagnosing detection problems.
-        private const bool EnableDebugLog = false;
-
-        // Hard cap so the log can never balloon again even when tracing is on.
-        private const long MaxDebugLogBytes = 1 * 1024 * 1024; // 1 MB
-
-        private static void DebugLog(string message)
-        {
-            if (!EnableDebugLog)
-                return;
-
-            try
-            {
-                // Bounded rotation: once the file passes the cap, start fresh.
-                try
-                {
-                    var info = new FileInfo(DebugLogPath);
-                    if (info.Exists && info.Length > MaxDebugLogBytes)
-                        File.Delete(DebugLogPath);
-                }
-                catch { /* ignore rotation errors */ }
-
-                File.AppendAllText(DebugLogPath,
-                    $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
-            }
-            catch { /* never let logging break the app */ }
         }
 
         private void CheckClaudeProcess()
@@ -572,118 +741,74 @@ namespace Claude_Widget
             if (force == "idle" || force == "working")
             {
                 _isWorking = force == "working";
-                if (_isWorking != _wasWorking)
-                {
-                    _wasWorking = _isWorking;
-                    UpdateAnimationState();
-                }
+                ApplyEffectiveState();
                 return;
             }
 
-            bool foundClaude = false;
-            int myPid = Environment.ProcessId;
-            int total = 0, candidates = 0, cmdLineReads = 0;
-            string? matched = null;
+            // Full pid list only while the dashboard is open (for the resource footer);
+            // otherwise first-match is enough for the liveness signal, keeping the tick cheap.
+            _claudePids.Clear();
+            _claudePids.AddRange(_scanner.Scan(collectAll: _hudOpen, excludePid: Environment.ProcessId));
+            _isWorking = _claudePids.Count > 0;
 
-            try
-            {
-                foreach (var proc in Process.GetProcesses())
-                {
-                    try
-                    {
-                        total++;
-                        if (proc.Id == myPid)
-                            continue;
+            // Backstop: if Claude Code is nowhere in the process list, no session can still
+            // be alive — clear any that never sent a SessionEnd (e.g. terminal was killed).
+            if (!_isWorking)
+                _registry.OnNoLiveProcesses();
 
-                        string baseName = proc.ProcessName.ToLowerInvariant();
-
-                        // Direct name match (e.g. future "claude-cli.exe")
-                        if (ClaudeCliProcessNames.Contains(baseName))
-                        {
-                            foundClaude = true;
-                            matched = $"pid={proc.Id} name={proc.ProcessName} (name-match)";
-                            break;
-                        }
-
-                        // Native "claude.exe" launcher shipped by @anthropic-ai/claude-code.
-                        // Confirm via image path so the desktop chat app (also Claude.exe,
-                        // installed under %LOCALAPPDATA%\AnthropicClaude\...) is not matched.
-                        if (baseName == "claude")
-                        {
-                            string? imagePath = TryGetProcessImagePath(proc.Id);
-                            if (imagePath == null)
-                            {
-                                DebugLog($"  claude.exe pid={proc.Id} image-read failed (win32err={Marshal.GetLastWin32Error()})");
-                                continue;
-                            }
-                            DebugLog($"  claude.exe pid={proc.Id} image={imagePath}");
-                            foreach (var hint in ClaudeCliImagePathHints)
-                            {
-                                if (imagePath.Contains(hint, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    foundClaude = true;
-                                    matched = $"pid={proc.Id} name={proc.ProcessName} image={imagePath}";
-                                    break;
-                                }
-                            }
-                            if (foundClaude)
-                                break;
-                            continue;
-                        }
-
-                        if (!IsScriptRunnerName(baseName))
-                            continue;
-
-                        // Script runner — need to peek at its command line via PEB.
-                        candidates++;
-                        string? cmd = TryReadCommandLineFromPeb(proc.Id, out string pebReason);
-                        cmdLineReads++;
-                        if (cmd == null)
-                        {
-                            DebugLog($"  peb-read failed pid={proc.Id} name={proc.ProcessName} reason={pebReason}");
-                            continue;
-                        }
-
-                        DebugLog($"  candidate pid={proc.Id} name={proc.ProcessName} cmd={cmd}");
-
-                        foreach (var hint in ClaudeCliCommandLineHints)
-                        {
-                            if (cmd.Contains(hint, StringComparison.OrdinalIgnoreCase))
-                            {
-                                foundClaude = true;
-                                matched = $"pid={proc.Id} name={proc.ProcessName} hint={hint}";
-                                break;
-                            }
-                        }
-                        if (foundClaude)
-                            break;
-                    }
-                    catch { /* skip inaccessible processes */ }
-                    finally
-                    {
-                        proc.Dispose();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                DebugLog($"ENUM ERROR: {ex.GetType().Name}: {ex.Message}");
-            }
-
-            DebugLog($"tick: total={total} candidates={candidates} pebReads={cmdLineReads} found={foundClaude} matched={matched ?? "(none)"}");
-
-            _isWorking = foundClaude;
-
-            if (_isWorking != _wasWorking)
-            {
-                _wasWorking = _isWorking;
-                UpdateAnimationState();
-            }
+            ApplyEffectiveState();
         }
 
-        private void UpdateAnimationState()
+        /// <summary>
+        /// Recomputes the character's effective state from the session registry (authoritative
+        /// when any session is known) or, as a fallback, the process poll. Also refreshes the
+        /// chip strip. Cheap to call often; it only animates on an actual state change.
+        /// </summary>
+        private void ApplyEffectiveState()
         {
-            if (_isWorking)
+            FleetSnapshot snap = _registry.Snapshot();
+
+            // Hook-first: when sessions are tracked (hooks installed), state is driven by the
+            // registry, so the PEB-walking process poll can back off. Stay responsive when no
+            // sessions are known or the dashboard needs fresh resource pids.
+            if (_processCheckTimer != null)
+            {
+                double sec = (snap.ActiveCount > 0 && !_hudOpen) ? 6 : 2;
+                if (Math.Abs(_processCheckTimer.Interval.TotalSeconds - sec) > 0.1)
+                    _processCheckTimer.Interval = TimeSpan.FromSeconds(sec);
+            }
+
+            SessionState target = snap.ActiveCount > 0
+                ? snap.AggregateState
+                : (_isWorking ? SessionState.Working : SessionState.Idle);
+
+            if (target != _effectiveState)
+            {
+                SessionState prev = _effectiveState;
+                _effectiveState = target;
+                // When sessions are tracked, the per-event handlers (prompt/stop/notify) do the
+                // talking; only the pure process-poll fallback narrates the transition itself.
+                TransitionTo(prev, target, narrate: snap.ActiveCount == 0);
+
+                ApplyExpression(target);
+                _idleSince = target == SessionState.Idle ? DateTime.Now : null;
+                if (target != SessionState.Idle)
+                    WakeUp();
+            }
+
+            RenderStrip(snap);
+        }
+
+        private static bool IsActivePosture(SessionState s) =>
+            s == SessionState.Working || s == SessionState.Waiting;
+
+        /// <summary>Animates the character between idle and active (working/waiting) postures.</summary>
+        private void TransitionTo(SessionState prev, SessionState target, bool narrate)
+        {
+            bool wasActive = IsActivePosture(prev);
+            bool isActive = IsActivePosture(target);
+
+            if (isActive && !wasActive)
             {
                 _workStartedAt = DateTime.Now;
                 _breakNudged = false;
@@ -691,21 +816,15 @@ namespace Claude_Widget
                 // Switch to working mode
                 StartStoryboard("LaptopFadeIn");
                 StartStoryboard("ScreenGlowAnimation");
-
-                // Move arms to keyboard position first, then start typing
                 AnimateArmPosition(toKeyboard: true);
                 StartStoryboard("TypingAnimation");
-
-                // Body bobs while typing
                 StartStoryboard("TypingBodyBob");
-
-                // Eyes look down at the screen
                 StartStoryboard("EyesLookDownAnimation");
 
-                SetStatusDotForState();
-                ShowSpeech(PickRandom(WorkStartMessages), 3000);
+                if (narrate)
+                    ShowSpeech(PickRandom(WorkStartMessages), 3000);
             }
-            else
+            else if (!isActive && wasActive)
             {
                 AccumulateWorkTime();
                 HideActivity();
@@ -715,33 +834,93 @@ namespace Claude_Widget
                 StopStoryboard("TypingAnimation");
                 StopStoryboard("TypingBodyBob");
                 StopStoryboard("ScreenGlowAnimation");
-
-                // Move arms back to idle position
                 AnimateArmPosition(toKeyboard: false);
-
-                // Eyes look back to center
                 StartStoryboard("EyesLookCenterAnimation");
 
-                // Reset body position
                 var resetY = new DoubleAnimation(0, TimeSpan.FromSeconds(0.3));
                 CharacterTranslate.BeginAnimation(TranslateTransform.YProperty, resetY);
 
-                SetStatusDotForState();
-                ShowSpeech(PickRandom(WorkDoneMessages), 3000);
+                if (narrate)
+                {
+                    Celebrate();
+                    ShowSpeech(PickRandom(WorkDoneMessages), 3000);
+                }
             }
+
+            SetStatusDotForState();
         }
 
-        /// <summary>Status dot colour: pending update (blue) wins over working (green)/idle (gray).</summary>
+        /// <summary>Status dot colour: pending update (blue) &gt; waiting (amber) &gt; working (green) &gt; idle (gray).</summary>
         private void SetStatusDotForState()
         {
             if (_pendingUpdate != null)
                 return; // keep the blue update indicator
 
-            string color = _isWorking ? "#44BB44" : "#888888";
+            string color = _effectiveState switch
+            {
+                SessionState.Waiting => "#F5A623", // blocked on you
+                SessionState.Working => "#44BB44",
+                _ => "#888888",
+            };
             var anim = new ColorAnimation(
                 (Color)ColorConverter.ConvertFromString(color), TimeSpan.FromSeconds(0.3));
             StatusDotFill.BeginAnimation(SolidColorBrush.ColorProperty, anim);
-            StatusDot.ToolTip = _isWorking ? "작업 중..." : "대기 중";
+            StatusDot.ToolTip = _effectiveState switch
+            {
+                SessionState.Waiting => "확인을 기다려요",
+                SessionState.Working => "작업 중...",
+                _ => "대기 중",
+            };
+        }
+
+        // ===================== Expressions / idle sleep =====================
+
+        private static void FadeOpacity(UIElement el, double to) =>
+            el.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(to, TimeSpan.FromSeconds(0.2)));
+
+        /// <summary>Swaps facial features to match the state — worried when waiting, happy otherwise.</summary>
+        private void ApplyExpression(SessionState state)
+        {
+            bool waiting = state == SessionState.Waiting;
+            FadeOpacity(LeftBrow, waiting ? 1 : 0);
+            FadeOpacity(RightBrow, waiting ? 1 : 0);
+            FadeOpacity(WorriedMouth, waiting ? 1 : 0);
+            FadeOpacity(HappyMouth, waiting ? 0 : 1);
+            if (waiting)
+                WakeUp();
+        }
+
+        /// <summary>A quick sparkle-pop + hop to celebrate a completed task.</summary>
+        private void Celebrate()
+        {
+            WakeUp();
+            StartStoryboard("CelebrateAnimation");
+        }
+
+        private void GoToSleep()
+        {
+            if (_sleeping)
+                return;
+            _sleeping = true;
+            LeftEyeGroup.Opacity = 0;
+            RightEyeGroup.Opacity = 0;
+            LeftEyeClosed.Opacity = 1;
+            RightEyeClosed.Opacity = 1;
+            StartStoryboard("SleepZzzAnimation");
+        }
+
+        private void WakeUp()
+        {
+            if (!_sleeping)
+                return;
+            _sleeping = false;
+            StopStoryboard("SleepZzzAnimation");
+            SleepZzz.Opacity = 0;
+            LeftEyeGroup.Opacity = 1;
+            RightEyeGroup.Opacity = 1;
+            LeftEyeClosed.Opacity = 0;
+            RightEyeClosed.Opacity = 0;
         }
 
         private void AccumulateWorkTime()
@@ -807,6 +986,17 @@ namespace Claude_Widget
             // Randomize next interval
             _idleActionTimer.Interval = TimeSpan.FromSeconds(2 + _random.NextDouble() * 4);
 
+            // Doze off after a long, quiet idle stretch (no bubble in view).
+            if (!_sleeping && _effectiveState == SessionState.Idle && _idleSince is DateTime since
+                && (DateTime.Now - since).TotalMinutes >= SleepAfterMinutes
+                && SpeechBubble.Opacity < 0.05)
+            {
+                GoToSleep();
+                return;
+            }
+            if (_sleeping)
+                return; // no blinks/looks while asleep
+
             // Pick a random idle action
             int action = _random.Next(10);
 
@@ -848,6 +1038,8 @@ namespace Claude_Widget
             if (!_settings.SpeechEnabled && !isUpdate)
                 return;
 
+            WakeUp(); // any message rouses a sleeping widget
+
             _bubbleIsUpdate = isUpdate;
             SpeechText.Text = text;
 
@@ -884,7 +1076,7 @@ namespace Claude_Widget
             if (_pendingUpdate != null)
                 _ = StartUpdateAsync();
             else
-                ShowStatsBubble();
+                ToggleHud();
         }
 
         // ===================== Stats =====================
@@ -1190,6 +1382,9 @@ namespace Claude_Widget
             _bubbleHideTimer?.Stop();
             _activityHideTimer?.Stop();
             _breakTimer?.Stop();
+            _pruneTimer?.Stop();
+            _costTimer?.Stop();
+            _hudTimer?.Stop();
 
             _cliMessages?.Dispose();
 
