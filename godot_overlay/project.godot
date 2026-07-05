@@ -1,0 +1,32 @@
+; Engine configuration file — Claude Pet Overlay (Phase 0 spike, Model A)
+; Godot 4.7-stable. Model A = small transparent window that MOVES to roam.
+
+config_version=5
+
+[application]
+
+config/name="Claude Pet Overlay"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[display]
+
+; Small window sized to the character (Model A). Roaming moves the WHOLE window.
+window/size/viewport_width=240
+window/size/viewport_height=260
+; Per-pixel transparency chain: allowed(project) + transparent(window) + viewport.transparent_bg(code)
+window/per_pixel_transparency/allowed=true
+window/size/transparent=true
+window/size/borderless=true
+window/size/always_on_top=true
+window/size/no_focus=true
+; Desktop pet: don't take over the whole screen / don't grab focus on launch.
+window/size/initial_position_type=0
+window/subwindows/embed_subwindows=false
+
+[rendering]
+
+; Keep the default clear color fully transparent (alpha 0) so nothing paints the bg.
+environment/defaults/default_clear_color=Color(0, 0, 0, 0)
+; MSAA a touch for a cleaner silhouette on the tiny window.
+anti_aliasing/quality/msaa_3d=1

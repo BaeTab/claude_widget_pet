@@ -29,7 +29,8 @@ Design matches the WPF 2D character (Claude theme):
     blush  #FFB6C1   eyes white/#241F1F   mouth #8B4513   star #FFD700
 """
 
-import bpy, bmesh, math, os
+import bpy, bmesh, math, os, json, struct
+from mathutils import Matrix, Euler, Vector
 
 # ----------------------------------------------------------------------------- setup
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -248,21 +249,218 @@ for a in (-36, -18, 0, 18, 36):
     bl = sphere(f"Fan{a}", (bx, by, 0.72), (0.06, 0.26, 0.20), M_LIMBDK, seg=32, ring=20)
     bl.rotation_euler = (math.radians(-22), 0.0, -r)
 
-# =========================================================================== IDLE ANIMATION
-# Gentle whole-body bob + sway, exported as a glTF node animation named "Idle".
-scene.frame_start, scene.frame_end = 1, 48
-root.rotation_mode = "XYZ"
-key = {1: (0.0, 0.0), 24: (0.10, math.radians(2.5)), 48: (0.0, 0.0)}
-for f, (dz, rz) in key.items():
-    root.location = (0.0, 0.0, dz)
-    root.rotation_euler = (0.0, 0.0, rz)
-    root.keyframe_insert("location", index=2, frame=f)
-    root.keyframe_insert("rotation_euler", index=2, frame=f)
-if root.animation_data and root.animation_data.action:
-    root.animation_data.action.name = "Idle"
-    for fc in root.animation_data.action.fcurves:
-        for kp in fc.keyframe_points:
-            kp.interpolation = "BEZIER"
+# =========================================================================== ARMATURE + RIG
+# Rigid bone-parenting: the mascot is a set of SEPARATE ellipsoid objects (not one skinned
+# mesh), so each part is parented to exactly one bone and rides it rigidly. We recompute
+# matrix_parent_inverse from the bone's TAIL matrix so nothing jumps from its authored
+# rest position. Bones (task-mandated 9):
+#   root -> body -> {L_arm, R_arm, tail_base->tail_mid->tail_tip}, root -> {L_foot, R_foot}
+arm_data = bpy.data.armatures.new("PetArmature")
+arm = bpy.data.objects.new("PetArmature", arm_data)
+coll.objects.link(arm)
+
+for o in bpy.context.view_layer.objects:
+    o.select_set(False)
+bpy.context.view_layer.objects.active = arm
+arm.select_set(True)
+try:
+    bpy.ops.object.mode_set(mode="EDIT")
+except RuntimeError:
+    with bpy.context.temp_override(active_object=arm, selected_objects=[arm]):
+        bpy.ops.object.mode_set(mode="EDIT")
+
+eb = arm_data.edit_bones
+def mkbone(name, head, tail, parent=None):
+    b = eb.new(name)
+    b.head = head
+    b.tail = tail
+    if parent is not None:
+        b.parent = parent
+    return b
+
+b_root  = mkbone("root",      (0.0,  0.0,  0.00), (0.0,  0.0,  0.35))
+b_body  = mkbone("body",      (0.0,  0.0,  0.45), (0.0,  0.0,  1.72), b_root)
+b_larm  = mkbone("L_arm",     (0.78, -0.14, 0.78), (1.34, -0.24, 0.62), b_body)
+b_rarm  = mkbone("R_arm",     (-0.78, -0.14, 0.78), (-1.34, -0.24, 0.62), b_body)
+b_tbas  = mkbone("tail_base", (0.0,  0.58, 0.54), (0.0,  0.92, 0.58), b_body)
+b_tmid  = mkbone("tail_mid",  (0.0,  0.92, 0.58), (0.0,  1.12, 0.63), b_tbas)
+b_ttip  = mkbone("tail_tip",  (0.0,  1.12, 0.63), (0.0,  1.42, 0.74), b_tmid)
+b_lfoot = mkbone("L_foot",    (0.40, -0.30, 0.26), (0.40, -0.40, 0.03), b_root)
+b_rfoot = mkbone("R_foot",    (-0.40, -0.30, 0.26), (-0.40, -0.40, 0.03), b_root)
+
+try:
+    bpy.ops.object.mode_set(mode="OBJECT")
+except RuntimeError:
+    with bpy.context.temp_override(active_object=arm, selected_objects=[arm]):
+        bpy.ops.object.mode_set(mode="OBJECT")
+bpy.context.view_layer.update()
+
+def bone_for(n):
+    if n.startswith("Fan"):  return "tail_tip"
+    if n == "TailSeg1":      return "tail_base"
+    if n == "TailSeg2":      return "tail_mid"
+    if n == "TailSeg3":      return "tail_tip"
+    if n.startswith(("Arm", "Palm", "Finger")):
+        return "R_arm" if n.endswith("-1") else "L_arm"
+    if n.startswith("Foot"):
+        return "R_foot" if n.endswith("-1") else "L_foot"
+    return "body"   # Body, Belly, Eye*, Pupil*, Hi*, Blush*, Shoulder*, Mouth, Star, StarGlow
+
+parts = [o for o in list(coll.objects) if o.type in ("MESH", "CURVE")]
+for o in parts:
+    bn = bone_for(o.name)
+    bone = arm.data.bones[bn]
+    o.parent = arm
+    o.parent_type = "BONE"
+    o.parent_bone = bn
+    # a bone-parented child lives in the space of the bone's TAIL; invert that so the
+    # part's authored matrix_basis renders exactly where it was placed (no jump).
+    tail_mat = bone.matrix_local @ Matrix.Translation((0.0, bone.length, 0.0))
+    o.matrix_parent_inverse = (arm.matrix_world @ tail_mat).inverted()
+
+# old root empty is no longer a parent; keep it only as a light-aim target and strip any
+# animation off it (all motion now lives on the armature's actions).
+root.animation_data_clear()
+
+# print rest-space bone axes (armature==world) so animation signs can be calibrated
+for bn in ("root", "body", "L_arm", "R_arm", "L_foot", "R_foot", "tail_base", "tail_tip"):
+    b = arm.data.bones[bn]
+    print("BONEAXES", bn,
+          "X", tuple(round(v, 2) for v in b.x_axis),
+          "Y", tuple(round(v, 2) for v in b.y_axis),
+          "Z", tuple(round(v, 2) for v in b.z_axis))
+
+# =========================================================================== ANIMATIONS
+# Five separate Actions, each stashed to its own NLA track + fake_user so the glTF ACTIONS
+# exporter reliably emits one glTF animation per action. Pose bones use XYZ euler; for the
+# two vertical bones (root, body): local X = world +X, local Y = world +Z, local Z = world -Y
+# (verified from the BONEAXES print) — so rot.x = pitch, rot.y = yaw(spin), rot.z = side-tilt.
+arm.animation_data_create()
+PB = arm.pose.bones
+for pb in PB:
+    pb.rotation_mode = "XYZ"
+# ---- world-space authoring ----------------------------------------------------------
+# Bone-local axes (esp. arms/feet) have non-obvious auto-roll, so we author every key in
+# INTUITIVE WORLD space and convert into the bone's rest frame via its rest matrix:
+#   rot = (pitch_X, roll_Y, yaw_Z) in DEGREES about world axes, pivoting on the bone head
+#   loc = (dx, dy, dz) world-space displacement in Blender units
+#   scale stays bone-local (fine for the vertical body: idx1 == height == world Z)
+# Sign map (world): +X right, -Y front(camera), +Z up. +pitch leans top toward front,
+# +roll tilts top toward +X, +yaw spins CCW-from-top. Arms point outward along +/-X.
+def _restrot(pb):
+    return pb.bone.matrix_local.to_3x3()
+
+def w2l_rot(pb, deg_xyz):
+    Mr = _restrot(pb)
+    Rw = Euler([math.radians(a) for a in deg_xyz], "XYZ").to_matrix()
+    return (Mr.transposed() @ Rw @ Mr).to_euler("XYZ")
+
+def w2l_loc(pb, vec):
+    return _restrot(pb).transposed() @ Vector(vec)
+
+def rest_pose():
+    for pb in PB:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+
+def kf(name, frame, loc=None, rot=None, scale=None):
+    pb = PB[name]
+    if loc is not None:
+        pb.location = w2l_loc(pb, loc)
+        pb.keyframe_insert("location", frame=frame)
+    if rot is not None:
+        pb.rotation_euler = w2l_rot(pb, rot)
+        pb.keyframe_insert("rotation_euler", frame=frame)
+    if scale is not None:
+        pb.scale = scale
+        pb.keyframe_insert("scale", frame=frame)
+
+def begin(name):
+    rest_pose()
+    act = bpy.data.actions.new(name)
+    act.use_fake_user = True
+    arm.animation_data.action = act
+    return act
+
+def finish(act, start=1):
+    for fc in act.fcurves:
+        for kpn in fc.keyframe_points:
+            kpn.interpolation = "BEZIER"
+    tr = arm.animation_data.nla_tracks.new()
+    tr.name = act.name
+    tr.strips.new(act.name, int(start), act)
+    arm.animation_data.action = None
+
+# --- idle (1-48 loop): body bob + breathing squash + tiny arm sway ------------------
+act = begin("idle")
+kf("body", 1,  loc=(0, 0, 0.0),  scale=(1.00, 1.00, 1.00))
+kf("body", 24, loc=(0, 0, 0.05), scale=(1.03, 0.96, 1.03))
+kf("body", 48, loc=(0, 0, 0.0),  scale=(1.00, 1.00, 1.00))
+# tiny opposite up/down arm float (raise = -Y-rot on L, +Y-rot on R)
+kf("L_arm", 1, rot=(0, 0, 0));  kf("L_arm", 24, rot=(0, -8, 0)); kf("L_arm", 48, rot=(0, 0, 0))
+kf("R_arm", 1, rot=(0, 0, 0));  kf("R_arm", 24, rot=(0,  8, 0)); kf("R_arm", 48, rot=(0, 0, 0))
+finish(act)
+
+# --- walk (1-28 loop): double body-bob + forward lean, feet alternate, arms swing opp -
+act = begin("walk")
+for f, y in ((1, 0.0), (7, 0.06), (14, 0.0), (21, 0.06), (28, 0.0)):
+    kf("body", f, loc=(0, 0, y), rot=(10, 0, 0))        # constant slight forward lean + bob
+# feet: step = lift up (+Z) and swing forward (-Y); planted foot stays at rest
+kf("L_foot", 1, loc=(0, 0, 0));  kf("L_foot", 7, loc=(0, -0.10, 0.14)); kf("L_foot", 14, loc=(0, 0, 0)); kf("L_foot", 28, loc=(0, 0, 0))
+kf("R_foot", 1, loc=(0, 0, 0));  kf("R_foot", 14, loc=(0, 0, 0)); kf("R_foot", 21, loc=(0, -0.10, 0.14)); kf("R_foot", 28, loc=(0, 0, 0))
+# arms swing opposite the legs (forward/back about world Z, i.e. yaw of the arm)
+kf("L_arm", 1, rot=(0, 0,  22)); kf("L_arm", 14, rot=(0, 0, -22)); kf("L_arm", 28, rot=(0, 0,  22))
+kf("R_arm", 1, rot=(0, 0,  22)); kf("R_arm", 14, rot=(0, 0, -22)); kf("R_arm", 28, rot=(0, 0,  22))
+finish(act)
+
+# --- sleep (1-64 loop): settle lower, side-tilt, slow deep breathing, arms droop -------
+act = begin("sleep")
+kf("body", 1,  loc=(0, 0, -0.14), rot=(0, 16, 0), scale=(1.00, 1.00, 1.00))
+kf("body", 32, loc=(0, 0, -0.17), rot=(0, 16, 0), scale=(1.05, 0.92, 1.05))   # deep inhale
+kf("body", 64, loc=(0, 0, -0.14), rot=(0, 16, 0), scale=(1.00, 1.00, 1.00))
+# arms droop down along the body (lower = +Y-rot on L, -Y-rot on R)
+kf("L_arm", 1, rot=(0,  58, 0)); kf("L_arm", 64, rot=(0,  58, 0))
+kf("R_arm", 1, rot=(0, -58, 0)); kf("R_arm", 64, rot=(0, -58, 0))
+finish(act)
+
+# --- celebrate (1-36): crouch -> hop + stretch -> land squash, arms up, root yaw spin --
+act = begin("celebrate")
+kf("root", 1,  loc=(0, 0, 0.0),   rot=(0, 0, 0))
+kf("root", 5,  loc=(0, 0, -0.07), rot=(0, 0, 0))       # crouch
+kf("root", 14, loc=(0, 0, 0.42),  rot=(0, 0, 18))      # apex + yaw spin (world Z)
+kf("root", 22, loc=(0, 0, 0.0),   rot=(0, 0, 30))      # land
+kf("root", 28, loc=(0, 0, -0.05), rot=(0, 0, 30))
+kf("root", 36, loc=(0, 0, 0.0),   rot=(0, 0, 30))
+kf("body", 1,  scale=(1.00, 1.00, 1.00))
+kf("body", 5,  scale=(1.08, 0.86, 1.08))               # anticipation squash
+kf("body", 14, scale=(0.90, 1.18, 0.90))               # stretch at apex (star pulses up w/ body)
+kf("body", 22, scale=(1.12, 0.84, 1.12))               # land squash
+kf("body", 30, scale=(0.98, 1.03, 0.98))
+kf("body", 36, scale=(1.00, 1.00, 1.00))
+# arms thrown UP (raise = -Y on L, +Y on R)
+kf("L_arm", 1, rot=(0, 0, 0)); kf("L_arm", 12, rot=(0, -80, 0)); kf("L_arm", 30, rot=(0, -80, 0)); kf("L_arm", 36, rot=(0, 0, 0))
+kf("R_arm", 1, rot=(0, 0, 0)); kf("R_arm", 12, rot=(0,  80, 0)); kf("R_arm", 30, rot=(0,  80, 0)); kf("R_arm", 36, rot=(0, 0, 0))
+finish(act)
+
+# --- worried (1-40 loop): pull back + shrink + tilt, arms tuck, fast small tremble -----
+act = begin("worried")
+kf("body", 1,  scale=(0.90, 0.90, 0.90), rot=(-8, 8, 0))   # lean back + shrink + tilt
+kf("body", 40, scale=(0.90, 0.90, 0.90), rot=(-8, 8, 0))
+# arms tuck: swing forward (-yaw on L / +yaw on R) and lower a touch
+kf("L_arm", 1, rot=(0, 24, -30)); kf("L_arm", 40, rot=(0, 24, -30))
+kf("R_arm", 1, rot=(0, -24, 30)); kf("R_arm", 40, rot=(0, -24, 30))
+# fast small left/right tremble on the root, pulled back (+Y)
+tv = 0.014
+for f in range(1, 41, 2):
+    s = tv if (f // 2) % 2 == 0 else -tv
+    kf("root", f, loc=(s, 0.07, 0.0))
+kf("root", 40, loc=(0.0, 0.07, 0.0))
+finish(act)
+
+# keep a sensible playback range; ACTIONS export uses each action's own frame_range
+scene.frame_start, scene.frame_end = 1, 64
+arm.animation_data.action = None
 
 # =========================================================================== LIGHTING (render-only)
 def area_light(name, loc, energy, size, color=(1, 1, 1)):
@@ -351,6 +549,12 @@ scene.render.film_transparent = True
 scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGBA"
 scene.view_settings.view_transform = "Standard"   # keep pastel purity (no Filmic)
+
+# beauty shots pose the character at REST: no active action + all NLA tracks muted so the
+# stashed clips don't drive the rig. (The authored silhouette == the approved v2 look.)
+for t in arm.animation_data.nla_tracks:
+    t.mute = True
+arm.animation_data.action = None
 scene.frame_set(1)
 
 print("RENDER_DEVICE", backend, "samples", scene.cycles.samples)
@@ -370,6 +574,36 @@ for s in shots:
     scene.render.resolution_x, scene.render.resolution_y = s["res"]
     scene.render.filepath = os.path.join(OUT_DIR, s["name"])
     bpy.ops.render.render(write_still=True)
+
+# =========================================================================== ANIM RENDERS
+# Pose the armature to each non-idle action at a representative frame and shoot a QA still
+# (front 3/4, same lighting). Drive the pose by assigning the action directly (NLA muted).
+def pose_action(act_name, frame):
+    for t in arm.animation_data.nla_tracks:
+        t.mute = True
+    arm.animation_data.action = bpy.data.actions.get(act_name)
+    scene.frame_set(frame)
+
+anim_shots = [
+    dict(name="claude_pet_anim_walk.png",      act="walk",      frame=7),
+    dict(name="claude_pet_anim_sleep.png",     act="sleep",     frame=32),
+    dict(name="claude_pet_anim_celebrate.png", act="celebrate", frame=14),
+    dict(name="claude_pet_anim_worried.png",   act="worried",   frame=20),
+]
+for a in anim_shots:
+    pose_action(a["act"], a["frame"])
+    cam.location = (-3.6, -5.2, 2.6)
+    look.location = (0.0, 0.0, 0.92)
+    cam_data.lens = 52
+    scene.render.resolution_x, scene.render.resolution_y = 720, 820
+    scene.render.filepath = os.path.join(OUT_DIR, a["name"])
+    bpy.ops.render.render(write_still=True)
+
+# restore rig for a clean export: no active action, all NLA tracks live (unmuted)
+arm.animation_data.action = None
+for t in arm.animation_data.nla_tracks:
+    t.mute = False
+scene.frame_set(1)
 
 # =========================================================================== POLY COUNT
 def total_tris():
@@ -402,6 +636,29 @@ bpy.ops.export_scene.gltf(
     use_selection=False,
 )
 glb_mb = os.path.getsize(glb_path) / (1024 * 1024)
+
+# =========================================================================== VERIFY GLB
+# Parse the binary glTF ourselves (do NOT trust the export log): 12-byte header, then the
+# first chunk (must be JSON), json.loads it, and assert exactly the 5 expected animations.
+def glb_json(path):
+    with open(path, "rb") as f:
+        magic, ver, total = struct.unpack("<III", f.read(12))
+        assert magic == 0x46546C67, "not a glTF binary (bad magic)"
+        clen, ctype = struct.unpack("<II", f.read(8))
+        assert ctype == 0x4E4F534A, "first chunk is not JSON"
+        return json.loads(f.read(clen))
+
+gj = glb_json(glb_path)
+anim_names = [a.get("name", "") for a in gj.get("animations", [])]
+print("GLB_ANIMATIONS", anim_names)
+for a in bpy.data.actions:
+    fr = a.frame_range
+    print("ACTION_RANGE", a.name, int(round(fr[0])), int(round(fr[1])))
+expected = {"idle", "walk", "sleep", "celebrate", "worried"}
+assert set(anim_names) == expected and len(anim_names) == 5, \
+    "ANIM VERIFY FAILED -> got %r (expected %r)" % (anim_names, sorted(expected))
+print("GLB_NODES", len(gj.get("nodes", [])), "MESHES", len(gj.get("meshes", [])))
+
 print("GLB_SIZE_MB {:.2f}".format(glb_mb))
 print("TRI_COUNT", tri_count)
 print("BUILD_PET_DONE", OUT_DIR)
