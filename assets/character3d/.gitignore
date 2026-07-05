@@ -1,0 +1,5 @@
+# Regenerable Blender outputs — rebuild with build_pet.py.
+# The glb (Godot-consumable) and the .py/.md sources ARE tracked.
+*.png
+*.blend
+*.blend1
