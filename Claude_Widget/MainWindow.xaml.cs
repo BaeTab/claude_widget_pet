@@ -54,7 +54,7 @@ namespace Claude_Widget
         // --- Enhanced state ---
         // Window is wider than the 220-wide character so the session strip has room;
         // the character canvas is centered within it.
-        private const double BaseWidth = 300;
+        private const double BaseWidth = 340;
         private const double BaseHeight = 332;
 
         // Chips shown before collapsing the remainder into a "+N" pill.
@@ -464,7 +464,7 @@ namespace Claude_Widget
                 Foreground = BrushOf("#2D2D2D"),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 66,
+                MaxWidth = 60,
                 FontFamily = new FontFamily("Segoe UI, Malgun Gothic"),
             };
             var content = new StackPanel { Orientation = Orientation.Horizontal };
@@ -510,7 +510,17 @@ namespace Claude_Widget
                 ToolTip = $"그 외 {n}개 세션",
                 Child = label,
             };
-            chip.MouseLeftButtonDown += (_, e) => { e.Handled = true; ShowAllSessionsSummary(); };
+            // Defer the open to after this mouse-down fully completes. Opening a
+            // StaysOpen=False popup from within a MouseLeftButtonDown handler makes the
+            // popup treat the same click's mouse-up as an outside click and dismiss
+            // itself instantly (dashboard flashes and vanishes). Background priority
+            // runs after the whole input cycle, so it opens cleanly — same pattern the
+            // demo-mode auto-open uses.
+            chip.MouseLeftButtonDown += (_, e) =>
+            {
+                e.Handled = true;
+                Dispatcher.BeginInvoke(new Action(ShowAllSessionsSummary), DispatcherPriority.Background);
+            };
             return chip;
         }
 

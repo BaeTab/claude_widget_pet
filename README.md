@@ -119,7 +119,7 @@ dotnet publish Claude_Widget/Claude_Widget.csproj -c Release -r win-x64 --self-c
 ```bash
 ISCC setup.iss
 # 또는 버전을 지정해서:
-ISCC /DMyAppVersion=1.3.0 setup.iss
+ISCC /DMyAppVersion=1.3.1 setup.iss
 ```
 
 Visual Studio에서 Release 구성으로 빌드하면 MSBuild 타깃이 자동으로 `publish/` 폴더까지 게시해줍니다.
