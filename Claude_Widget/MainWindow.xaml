@@ -3,7 +3,7 @@
 		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 		Title="Claude Widget"
 		Icon="pack://application:,,,/Assets/app.ico"
-		Width="220" Height="300"
+		Width="300" Height="332"
 		WindowStyle="None"
 		AllowsTransparency="True"
 		Background="Transparent"
@@ -14,6 +14,7 @@
 
 	<Window.ContextMenu>
 		<ContextMenu x:Name="WidgetContextMenu">
+			<MenuItem Header="세션 대시보드 보기" Click="ShowHud_Click"/>
 			<MenuItem Header="오늘의 기록 보기" Click="ShowStats_Click"/>
 			<Separator/>
 			<MenuItem Header="테마">
@@ -238,6 +239,29 @@
 				AutoReverse="True"/>
 		</Storyboard>
 
+		<!-- Sleepy Zzz: drift up + gentle fade loop (started when the widget dozes off) -->
+		<Storyboard x:Key="SleepZzzAnimation" RepeatBehavior="Forever">
+			<DoubleAnimation Storyboard.TargetName="SleepZzzTranslate" Storyboard.TargetProperty="Y"
+							 From="2" To="-12" Duration="0:0:2.2"/>
+			<DoubleAnimation Storyboard.TargetName="SleepZzz" Storyboard.TargetProperty="Opacity"
+							 From="0.25" To="1" Duration="0:0:1.1" AutoReverse="True"/>
+		</Storyboard>
+
+		<!-- Celebration: a quick scale pop of the head sparkle + hop on task completion.
+		     FillBehavior=Stop so it releases the properties afterward and the perpetual
+		     SparkleAnimation resumes control of the twinkle. -->
+		<Storyboard x:Key="CelebrateAnimation">
+			<DoubleAnimation Storyboard.TargetName="SparkleScale" Storyboard.TargetProperty="ScaleX"
+							 From="1" To="1.9" Duration="0:0:0.5" AutoReverse="True" FillBehavior="Stop"
+							 EasingFunction="{StaticResource BubbleEase}"/>
+			<DoubleAnimation Storyboard.TargetName="SparkleScale" Storyboard.TargetProperty="ScaleY"
+							 From="1" To="1.9" Duration="0:0:0.5" AutoReverse="True" FillBehavior="Stop"
+							 EasingFunction="{StaticResource BubbleEase}"/>
+			<DoubleAnimation Storyboard.TargetName="CharacterTranslate" Storyboard.TargetProperty="Y"
+							 From="0" To="-10" Duration="0:0:0.22" AutoReverse="True" FillBehavior="Stop"
+							 EasingFunction="{StaticResource EaseInOut}"/>
+		</Storyboard>
+
 		<!-- Speech bubble pop-in (scale + fade with a playful overshoot) -->
 		<BackEase x:Key="BubbleEase" EasingMode="EaseOut" Amplitude="0.6"/>
 		<Storyboard x:Key="BubblePopIn">
@@ -313,12 +337,27 @@
 
 	</Window.Resources>
 
-	<Canvas x:Name="MainCanvas" Width="220" Height="300">
-		<Canvas.RenderTransform>
-			<TransformGroup>
-				<ScaleTransform x:Name="WidgetScale" ScaleX="1" ScaleY="1"/>
-			</TransformGroup>
-		</Canvas.RenderTransform>
+	<!-- Root: a fixed-height session-chip strip stacked above the character canvas.
+	     The scale transform lives here so both the strip and character scale together;
+	     the character canvas keeps its own 220x300 coordinate system unchanged. -->
+	<Grid x:Name="RootGrid">
+		<Grid.RenderTransform>
+			<ScaleTransform x:Name="WidgetScale" ScaleX="1" ScaleY="1"/>
+		</Grid.RenderTransform>
+		<Grid.RowDefinitions>
+			<RowDefinition Height="32"/>
+			<RowDefinition Height="300"/>
+		</Grid.RowDefinitions>
+
+		<!-- ===== Session chip strip (multi-session awareness) ===== -->
+		<Border x:Name="SessionStripHost" Grid.Row="0" Visibility="Collapsed"
+				MaxWidth="300" ClipToBounds="True"
+				HorizontalAlignment="Center" VerticalAlignment="Center">
+			<StackPanel x:Name="SessionStrip" Orientation="Horizontal" HorizontalAlignment="Center"/>
+		</Border>
+
+	<!-- Character canvas keeps its own 220-wide coordinate system, centered in the wider window. -->
+	<Canvas x:Name="MainCanvas" Grid.Row="1" Width="220" Height="300" HorizontalAlignment="Center">
 
 		<!-- Entire character group for bounce (offset down/right to leave headroom for the speech bubble) -->
 		<Canvas Canvas.Left="10" Canvas.Top="56">
@@ -496,10 +535,22 @@
 				<Ellipse Canvas.Left="126" Canvas.Top="140" Width="18" Height="9"
 						 Fill="#FFB6C1" Opacity="0.45"/>
 
+				<!-- Worried eyebrows (angled inward-down); shown when a session is waiting on you -->
+				<Path x:Name="LeftBrow" Canvas.Left="66" Canvas.Top="107"
+					  Data="M 0,5 L 17,0" Stroke="#8B4513" StrokeThickness="2.6"
+					  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Opacity="0"/>
+				<Path x:Name="RightBrow" Canvas.Left="117" Canvas.Top="107"
+					  Data="M 0,0 L 17,5" Stroke="#8B4513" StrokeThickness="2.6"
+					  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Opacity="0"/>
+
 				<!-- Mouth (happy) -->
-				<Path Canvas.Left="85" Canvas.Top="148"
+				<Path x:Name="HappyMouth" Canvas.Left="85" Canvas.Top="148"
 					  Data="M 0,0 Q 14,10 28,0"
 					  Stroke="#8B4513" StrokeThickness="2" Fill="Transparent"/>
+
+				<!-- Mouth (worried, small open oval); shown alongside the brows when waiting -->
+				<Ellipse x:Name="WorriedMouth" Canvas.Left="94" Canvas.Top="150" Width="12" Height="9"
+						 Fill="#7A3B10" Opacity="0"/>
 
 				<!-- Claude sparkle/star on top -->
 				<Canvas Canvas.Left="88" Canvas.Top="48" RenderTransformOrigin="0.5,0.5">
@@ -516,6 +567,16 @@
 					<Ellipse Canvas.Left="8" Canvas.Top="8" Width="8" Height="8"
 							 Fill="#FFFACD" Opacity="0.6"/>
 				</Canvas>
+			</Canvas>
+
+			<!-- Sleepy "z z z" (floats up near the head during long idle) -->
+			<Canvas x:Name="SleepZzz" Canvas.Left="126" Canvas.Top="26" Opacity="0">
+				<Canvas.RenderTransform>
+					<TranslateTransform x:Name="SleepZzzTranslate" X="0" Y="0"/>
+				</Canvas.RenderTransform>
+				<TextBlock Canvas.Left="0"  Canvas.Top="18" Text="z" FontSize="11" FontWeight="Bold" Foreground="#8FA6C4"/>
+				<TextBlock Canvas.Left="9"  Canvas.Top="8"  Text="z" FontSize="14" FontWeight="Bold" Foreground="#8FA6C4"/>
+				<TextBlock Canvas.Left="20" Canvas.Top="-2" Text="z" FontSize="17" FontWeight="Bold" Foreground="#8FA6C4"/>
 			</Canvas>
 
 			<!-- Laptop group (hidden by default, shown when working) — sleek silver laptop -->
@@ -681,4 +742,27 @@
 			</Border>
 		</Canvas>
 	</Canvas>
+
+	<!-- ===== Session dashboard (HUD): per-session cost/time + total system usage =====
+	     A Popup renders as its own top-level window, so it can be larger than the widget
+	     and sit beside it. Opened from the status dot / "+N" chip / context menu. -->
+	<Popup x:Name="HudPopup" AllowsTransparency="True" StaysOpen="False" Placement="Left"
+		   PlacementTarget="{Binding ElementName=MainCanvas}" HorizontalOffset="-4"
+		   PopupAnimation="Fade" Closed="HudPopup_Closed">
+		<Border Background="White" CornerRadius="12" BorderBrush="#E4E4E7" BorderThickness="1"
+				Padding="14,12" Margin="10" Width="286">
+			<Border.Effect>
+				<DropShadowEffect Color="#50000000" BlurRadius="18" ShadowDepth="2" Direction="270"/>
+			</Border.Effect>
+			<StackPanel>
+				<TextBlock Text="세션 대시보드" FontWeight="Bold" FontSize="13" Foreground="#2D2D2D"
+						   Margin="0,0,0,9" FontFamily="Segoe UI, Malgun Gothic"/>
+				<StackPanel x:Name="HudRows"/>
+				<Border Height="1" Background="#EEEEEE" Margin="0,9,0,8"/>
+				<TextBlock x:Name="HudFooter" FontSize="10.5" Foreground="#6B7280" TextWrapping="Wrap"
+						   LineHeight="16" FontFamily="Segoe UI, Malgun Gothic"/>
+			</StackPanel>
+		</Border>
+	</Popup>
+	</Grid>
 </Window>
