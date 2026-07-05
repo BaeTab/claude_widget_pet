@@ -1043,12 +1043,24 @@ namespace Claude_Widget
 
         private string PickRandom(string[] pool) => pool[_random.Next(pool.Length)];
 
-        private void ShowSpeech(string text, int durationMs, bool isUpdate = false)
+        /// <summary>
+        /// Shows the speech bubble with <paramref name="text"/>. When <paramref name="animate"/>
+        /// is false the bubble's pop-in (scale 0.5→1) is skipped and only the text is swapped in
+        /// place — used for high-frequency updates (e.g. download progress %) so the bubble doesn't
+        /// flicker by replaying the shrink/grow pop on every tick. Falls back to an animated pop if
+        /// the bubble isn't already on screen.
+        /// </summary>
+        private void ShowSpeech(string text, int durationMs, bool isUpdate = false, bool animate = true)
         {
             if (!_settings.SpeechEnabled && !isUpdate)
                 return;
 
             WakeUp(); // any message rouses a sleeping widget
+
+            // An in-place (non-animated) update only makes sense while the bubble is visible;
+            // otherwise there's nothing on screen to update, so pop it in normally.
+            if (!animate && SpeechBubble.Opacity < 0.99)
+                animate = true;
 
             _bubbleIsUpdate = isUpdate;
             SpeechText.Text = text;
@@ -1058,7 +1070,8 @@ namespace Claude_Widget
             double bottom = Canvas.GetTop(BubbleBorder) + BubbleBorder.ActualHeight;
             Canvas.SetTop(BubbleTail, bottom - 7);
 
-            StartStoryboard("BubblePopIn");
+            if (animate)
+                StartStoryboard("BubblePopIn");
 
             _bubbleHideTimer.Stop();
             _bubbleHideTimer.Interval = TimeSpan.FromMilliseconds(durationMs);
@@ -1174,9 +1187,20 @@ namespace Claude_Widget
             _updateInProgress = true;
             var info = _pendingUpdate;
 
+            // Show the bubble once (animated pop), then update the percentage in place: only when
+            // the integer percent actually changes, and WITHOUT replaying the pop-in on each tick.
+            // Progress fires many times per second, so replaying the scale 0.5→1 pop made the bubble
+            // rapidly shrink/grow. animate:false swaps just the text in the (fixed-width) bubble.
+            ShowSpeech("업데이트 다운로드 중… 0%", 60000, isUpdate: true);
+            int lastPct = 0;
             var progress = new Progress<double>(p =>
-                ShowSpeech($"업데이트 다운로드 중… {p * 100:0}%", 60000));
-            ShowSpeech("업데이트 다운로드 중…", 60000);
+            {
+                int pct = (int)(p * 100);
+                if (pct == lastPct)
+                    return;
+                lastPct = pct;
+                ShowSpeech($"업데이트 다운로드 중… {pct}%", 60000, isUpdate: true, animate: false);
+            });
 
             string? path = await UpdateService.DownloadInstallerAsync(info, progress);
             if (path == null)

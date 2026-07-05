@@ -4,7 +4,7 @@
 #define MyAppName "Claude Widget"
 ; MyAppVersion can be overridden on the ISCC command line: ISCC /DMyAppVersion=1.2.0 setup.iss
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.1"
+  #define MyAppVersion "1.3.2"
 #endif
 #define MyAppPublisher "BaeTab"
 #define MyAppExeName "ClaudeWidget.exe"
