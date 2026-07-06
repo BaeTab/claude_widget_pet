@@ -64,6 +64,11 @@ namespace Claude_Widget
         private System.Windows.Forms.NotifyIcon? _trayIcon;
         private CliMessageService? _cliMessages;
 
+        // Phase 1 (experimental): optional Godot 3D "face" overlay. Null unless
+        // Settings.Enable3DOverlay is true; when null every hook below is a no-op,
+        // so the shipped 2D behavior is unchanged.
+        private PetOverlayService? _petOverlay;
+
         private UpdateInfo? _pendingUpdate;
         private bool _bubbleIsUpdate;
         private DateTime? _workStartedAt;
@@ -139,6 +144,7 @@ namespace Claude_Widget
             SetupTrayIcon();
             SetupCliMessages();
             SeedDemoSessionsIfRequested();
+            TrySetupPetOverlay();
 
             // Process detection timer (every 2 seconds)
             _processCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -346,6 +352,111 @@ namespace Claude_Widget
                 return text;
             string project = SessionRegistry.ProjectNameFromCwd(ev.Cwd);
             return $"{project} · {text}";
+        }
+
+        // ===================== 3D overlay (Phase 1, experimental) =====================
+
+        /// <summary>
+        /// Spawns the Godot "face" overlay ONLY when Settings.Enable3DOverlay is true.
+        /// Everything is wrapped so a missing engine / failed spawn can never crash the
+        /// widget — on any failure the 2D character just carries on as the fallback.
+        /// </summary>
+        private void TrySetupPetOverlay()
+        {
+            if (!_settings.Enable3DOverlay)
+                return; // default path: no engine, zero behavior change.
+
+            try
+            {
+                string? godot = ResolveGodotExe();
+                string? project = ResolveOverlayProject(out string? exportedExe);
+                if (godot == null && exportedExe == null)
+                {
+                    Debug.WriteLine("[pet] 3D overlay enabled but no Godot exe/export found; staying 2D.");
+                    return;
+                }
+
+                _petOverlay = new PetOverlayService(new PetOverlayService.Options
+                {
+                    GodotExePath = godot ?? "",
+                    ProjectPath = project ?? "",
+                    ExportedExePath = exportedExe,
+                    Log = m => Debug.WriteLine("[pet] " + m),
+                });
+                _petOverlay.CharacterClicked += () => Dispatcher.BeginInvoke(new Action(ToggleHud));
+                _petOverlay.Connected += () => Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    PushOverlayState();
+                    try { _ = _petOverlay?.SendAsync(new { type = "roam", mode = "wander" }); } catch { }
+                }));
+                _petOverlay.Start();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("[pet] overlay setup failed: " + ex.Message);
+                _petOverlay = null; // fall back to the 2D character
+            }
+        }
+
+        /// <summary>Forwards the current aggregate session state to the overlay (no-op if disabled).</summary>
+        private void PushOverlayState()
+        {
+            if (_petOverlay == null)
+                return;
+            try
+            {
+                (string value, bool urgent) = _effectiveState switch
+                {
+                    SessionState.Waiting => ("waiting", true),
+                    SessionState.Working => ("working", false),
+                    SessionState.Ended => ("ended", false),
+                    _ => ("idle", false),
+                };
+                _ = _petOverlay.SendAsync(new { type = "state", value, urgent });
+            }
+            catch { /* overlay faults never touch the UI */ }
+        }
+
+        /// <summary>Best-effort locate the Godot 4 executable (dev mode). Null if not found.</summary>
+        private static string? ResolveGodotExe()
+        {
+            string? env = Environment.GetEnvironmentVariable("GODOT4_EXE");
+            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+                return env;
+
+            string winget = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                @"Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7-stable_win64.exe");
+            return File.Exists(winget) ? winget : null;
+        }
+
+        /// <summary>
+        /// Locate the overlay project dir (dev) or a packaged export (shipped) by walking up
+        /// from the app base directory. Sets <paramref name="exportedExe"/> if a packaged
+        /// ClaudeWidgetPet.exe is found beside the app; otherwise returns the dev project dir.
+        /// </summary>
+        private static string? ResolveOverlayProject(out string? exportedExe)
+        {
+            exportedExe = null;
+
+            // Shipped layout (Phase 3): the Godot export sits next to the widget exe.
+            string baseDir = AppContext.BaseDirectory;
+            string shipped = Path.Combine(baseDir, "overlay", "ClaudeWidgetPet.exe");
+            if (File.Exists(shipped))
+            {
+                exportedExe = shipped;
+                return null;
+            }
+
+            // Dev layout: walk up looking for godot_overlay\project.godot.
+            var dir = new DirectoryInfo(baseDir);
+            for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+            {
+                string cand = Path.Combine(dir.FullName, "godot_overlay", "project.godot");
+                if (File.Exists(cand))
+                    return Path.GetDirectoryName(cand);
+            }
+            return null;
         }
 
         // ===================== Tool activity badge =====================
@@ -804,6 +915,9 @@ namespace Claude_Widget
                 _idleSince = target == SessionState.Idle ? DateTime.Now : null;
                 if (target != SessionState.Idle)
                     WakeUp();
+
+                // Mirror the derived state to the 3D overlay (no-op unless enabled).
+                PushOverlayState();
             }
 
             RenderStrip(snap);
@@ -1421,6 +1535,9 @@ namespace Claude_Widget
             _hudTimer?.Stop();
 
             _cliMessages?.Dispose();
+
+            // Tear down the 3D overlay if it was started (best-effort; kills the engine).
+            try { _petOverlay?.Dispose(); } catch { /* never block shutdown */ }
 
             if (_trayIcon != null)
             {

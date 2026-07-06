@@ -98,6 +98,8 @@ M_WHITE  = material("EyeWhite", "#FFFFFF", roughness=0.12, coat=1.0, coat_rough=
 M_PUPIL  = material("Pupil",  "#241F1F", roughness=0.15, coat=1.0, coat_rough=0.02)
 M_BLUSH  = material("Blush",  "#FFB6C1", roughness=0.60, emit_hex="#FFB6C1", emit_strength=0.15)
 M_MOUTH  = material("Mouth",  "#8B4513", roughness=0.50)
+M_BROW   = material("Brow",   "#8B4513", roughness=0.48, coat=0.15)   # worried eyebrows
+M_WMOUTH = material("WorryMouth", "#7A3B10", roughness=0.55)          # worried open-oval mouth
 M_STAR   = material("Star",   "#FFD700", roughness=0.22, metallic=0.35,
                     emit_hex="#FFE45A", emit_strength=3.5)
 
@@ -208,10 +210,23 @@ for side in (-1, 1):
     # rosy cheeks
     sphere(f"Blush{side}",    (0.66 * side, -0.82, 0.86), (0.22, 0.11, 0.15), M_BLUSH, seg=28, ring=16)
 
-# Small gentle smile just below the eyes.
+# Small gentle smile just below the eyes.  (rides bone `face_happy`)
 tube("Mouth",
      [(-0.20, -0.98, 0.86), (0.0, -1.02, 0.79), (0.20, -0.98, 0.86)],
      bevel=0.030, mat=M_MOUTH)
+
+# =========================================================================== WORRIED FACE (rides bone `face_worried`)
+# Hidden by default (face_worried bone scaled ~0 everywhere except the `worried` clip).
+# Two angled eyebrows (inner corners raised = the classic anxious/worried brow) + a small
+# dark open-oval "O" mouth. Authored at their true on-face positions so they read correctly
+# the instant face_worried scales back to 1.
+for side in (-1, 1):
+    # thin tapered brow bar just above each eye, tilted so the INNER end lifts (worried)
+    br = sphere(f"Brow{side}", (0.33 * side, -0.95, 1.50), (0.185, 0.052, 0.058), M_BROW,
+                seg=28, ring=16)
+    br.rotation_euler = (0, math.radians(22 * side), 0)   # +Y-rot lifts inner end on +X side
+# small downturned/open-oval mouth: a vertical dark ellipsoid = an "o" of concern
+sphere("WMouth", (0.0, -1.00, 0.80), (0.105, 0.07, 0.14), M_WMOUTH, seg=32, ring=20)
 
 # =========================================================================== STAR (Claude sparkle)
 # 3D bipyramid gem, slightly embedded into the head, jaunty tilt.
@@ -253,8 +268,9 @@ for a in (-36, -18, 0, 18, 36):
 # Rigid bone-parenting: the mascot is a set of SEPARATE ellipsoid objects (not one skinned
 # mesh), so each part is parented to exactly one bone and rides it rigidly. We recompute
 # matrix_parent_inverse from the bone's TAIL matrix so nothing jumps from its authored
-# rest position. Bones (task-mandated 9):
-#   root -> body -> {L_arm, R_arm, tail_base->tail_mid->tail_tip}, root -> {L_foot, R_foot}
+# rest position. Bones (9 pose bones + 3 scale-only face/star bones = 12):
+#   root -> body -> {L_arm, R_arm, tail_base->tail_mid->tail_tip,
+#                    face_happy, face_worried, star}, root -> {L_foot, R_foot}
 arm_data = bpy.data.armatures.new("PetArmature")
 arm = bpy.data.objects.new("PetArmature", arm_data)
 coll.objects.link(arm)
@@ -287,6 +303,12 @@ b_tmid  = mkbone("tail_mid",  (0.0,  0.92, 0.58), (0.0,  1.12, 0.63), b_tbas)
 b_ttip  = mkbone("tail_tip",  (0.0,  1.12, 0.63), (0.0,  1.42, 0.74), b_tmid)
 b_lfoot = mkbone("L_foot",    (0.40, -0.30, 0.26), (0.40, -0.40, 0.03), b_root)
 b_rfoot = mkbone("R_foot",    (-0.40, -0.30, 0.26), (-0.40, -0.40, 0.03), b_root)
+# face-swap + star bones (children of body). Scale-only bones: scaling one to ~0 hides all
+# of its bone-parented children (exports as glTF node scale). face_happy carries the smile,
+# face_worried carries brows+worried mouth, star carries the sparkle gem for its own pulse.
+b_fhap  = mkbone("face_happy",   (0.0, -0.60, 0.95), (0.0, -0.98, 0.95), b_body)
+b_fwor  = mkbone("face_worried", (0.0, -0.60, 1.12), (0.0, -0.98, 1.12), b_body)
+b_star  = mkbone("star",         (0.0, -0.13, 2.34), (0.0, -0.13, 2.70), b_body)
 
 try:
     bpy.ops.object.mode_set(mode="OBJECT")
@@ -304,7 +326,10 @@ def bone_for(n):
         return "R_arm" if n.endswith("-1") else "L_arm"
     if n.startswith("Foot"):
         return "R_foot" if n.endswith("-1") else "L_foot"
-    return "body"   # Body, Belly, Eye*, Pupil*, Hi*, Blush*, Shoulder*, Mouth, Star, StarGlow
+    if n == "Mouth":                       return "face_happy"    # the smile
+    if n.startswith(("Brow", "WMouth")):   return "face_worried"  # brows + worried "o"
+    if n.startswith("Star"):               return "star"          # Star + StarGlow (own pulse)
+    return "body"   # Body, Belly, Eye*, Pupil*, Hi*, Blush*, Shoulder*
 
 parts = [o for o in list(coll.objects) if o.type in ("MESH", "CURVE")]
 for o in parts:
@@ -376,6 +401,19 @@ def kf(name, frame, loc=None, rot=None, scale=None):
         pb.scale = scale
         pb.keyframe_insert("scale", frame=frame)
 
+_HIDE = (0.001, 0.001, 0.001)
+_SHOW = (1.0, 1.0, 1.0)
+
+def face_neutral(f0, f1):
+    """Happy smile ON, worried brows/mouth OFF — keyed flat across [f0,f1] so a clip fully
+    OWNS the face state regardless of what clip played before it (glTF players keep the last
+    value on channels a new clip doesn't touch)."""
+    kf("face_happy",   f0, scale=_SHOW); kf("face_happy",   f1, scale=_SHOW)
+    kf("face_worried", f0, scale=_HIDE); kf("face_worried", f1, scale=_HIDE)
+
+def star_steady(f0, f1):
+    kf("star", f0, scale=_SHOW); kf("star", f1, scale=_SHOW)
+
 def begin(name):
     rest_pose()
     act = bpy.data.actions.new(name)
@@ -400,6 +438,7 @@ kf("body", 48, loc=(0, 0, 0.0),  scale=(1.00, 1.00, 1.00))
 # tiny opposite up/down arm float (raise = -Y-rot on L, +Y-rot on R)
 kf("L_arm", 1, rot=(0, 0, 0));  kf("L_arm", 24, rot=(0, -8, 0)); kf("L_arm", 48, rot=(0, 0, 0))
 kf("R_arm", 1, rot=(0, 0, 0));  kf("R_arm", 24, rot=(0,  8, 0)); kf("R_arm", 48, rot=(0, 0, 0))
+face_neutral(1, 48); star_steady(1, 48)
 finish(act)
 
 # --- walk (1-28 loop): double body-bob + forward lean, feet alternate, arms swing opp -
@@ -412,6 +451,7 @@ kf("R_foot", 1, loc=(0, 0, 0));  kf("R_foot", 14, loc=(0, 0, 0)); kf("R_foot", 2
 # arms swing opposite the legs (forward/back about world Z, i.e. yaw of the arm)
 kf("L_arm", 1, rot=(0, 0,  22)); kf("L_arm", 14, rot=(0, 0, -22)); kf("L_arm", 28, rot=(0, 0,  22))
 kf("R_arm", 1, rot=(0, 0,  22)); kf("R_arm", 14, rot=(0, 0, -22)); kf("R_arm", 28, rot=(0, 0,  22))
+face_neutral(1, 28); star_steady(1, 28)
 finish(act)
 
 # --- sleep (1-64 loop): settle lower, side-tilt, slow deep breathing, arms droop -------
@@ -422,6 +462,7 @@ kf("body", 64, loc=(0, 0, -0.14), rot=(0, 16, 0), scale=(1.00, 1.00, 1.00))
 # arms droop down along the body (lower = +Y-rot on L, -Y-rot on R)
 kf("L_arm", 1, rot=(0,  58, 0)); kf("L_arm", 64, rot=(0,  58, 0))
 kf("R_arm", 1, rot=(0, -58, 0)); kf("R_arm", 64, rot=(0, -58, 0))
+face_neutral(1, 64); star_steady(1, 64)
 finish(act)
 
 # --- celebrate (1-36): crouch -> hop + stretch -> land squash, arms up, root yaw spin --
@@ -441,6 +482,14 @@ kf("body", 36, scale=(1.00, 1.00, 1.00))
 # arms thrown UP (raise = -Y on L, +Y on R)
 kf("L_arm", 1, rot=(0, 0, 0)); kf("L_arm", 12, rot=(0, -80, 0)); kf("L_arm", 30, rot=(0, -80, 0)); kf("L_arm", 36, rot=(0, 0, 0))
 kf("R_arm", 1, rot=(0, 0, 0)); kf("R_arm", 12, rot=(0,  80, 0)); kf("R_arm", 30, rot=(0,  80, 0)); kf("R_arm", 36, rot=(0, 0, 0))
+face_neutral(1, 36)
+# star sparkle pulse — its OWN scale channel, peaking at the hop apex, decoupled from the
+# body squash/stretch keys above (which pinch the body in on the same frames)
+kf("star", 1,  scale=(1.00, 1.00, 1.00))
+kf("star", 6,  scale=(1.05, 1.05, 1.05))
+kf("star", 14, scale=(1.35, 1.35, 1.35))   # apex sparkle
+kf("star", 24, scale=(1.00, 1.00, 1.00))
+kf("star", 36, scale=(1.00, 1.00, 1.00))
 finish(act)
 
 # --- worried (1-40 loop): pull back + shrink + tilt, arms tuck, fast small tremble -----
@@ -456,6 +505,11 @@ for f in range(1, 41, 2):
     s = tv if (f // 2) % 2 == 0 else -tv
     kf("root", f, loc=(s, 0.07, 0.0))
 kf("root", 40, loc=(0.0, 0.07, 0.0))
+# FACE SWAP: hide the smile, reveal brows + worried "o" mouth for the whole clip (flat keys
+# so every rendered/played frame shows the worried face)
+kf("face_happy",   1, scale=_HIDE); kf("face_happy",   40, scale=_HIDE)
+kf("face_worried", 1, scale=_SHOW); kf("face_worried", 40, scale=_SHOW)
+star_steady(1, 40)
 finish(act)
 
 # keep a sensible playback range; ACTIONS export uses each action's own frame_range
@@ -555,7 +609,13 @@ scene.view_settings.view_transform = "Standard"   # keep pastel purity (no Filmi
 for t in arm.animation_data.nla_tracks:
     t.mute = True
 arm.animation_data.action = None
+# rest defaults the face/star bones to scale 1, which would show BOTH faces at once — force
+# the happy face and hide the worried set for every beauty/QA still.
+PB["face_happy"].scale   = _SHOW
+PB["face_worried"].scale = _HIDE
+PB["star"].scale         = _SHOW
 scene.frame_set(1)
+bpy.context.view_layer.update()
 
 print("RENDER_DEVICE", backend, "samples", scene.cycles.samples)
 
@@ -587,14 +647,17 @@ def pose_action(act_name, frame):
 anim_shots = [
     dict(name="claude_pet_anim_walk.png",      act="walk",      frame=7),
     dict(name="claude_pet_anim_sleep.png",     act="sleep",     frame=32),
-    dict(name="claude_pet_anim_celebrate.png", act="celebrate", frame=14),
+    # celebrate frame 14 = hop apex: root lifts +0.42 and the star pulses to 1.35, so pull
+    # the camera back + aim higher to keep the whole airborne pose AND the pulsing star in frame
+    dict(name="claude_pet_anim_celebrate.png", act="celebrate", frame=14,
+         cam=(-4.4, -6.4, 3.5), look=(0.0, 0.0, 1.55), lens=48),
     dict(name="claude_pet_anim_worried.png",   act="worried",   frame=20),
 ]
 for a in anim_shots:
     pose_action(a["act"], a["frame"])
-    cam.location = (-3.6, -5.2, 2.6)
-    look.location = (0.0, 0.0, 0.92)
-    cam_data.lens = 52
+    cam.location = a.get("cam", (-3.6, -5.2, 2.6))
+    look.location = a.get("look", (0.0, 0.0, 0.92))
+    cam_data.lens = a.get("lens", 52)
     scene.render.resolution_x, scene.render.resolution_y = 720, 820
     scene.render.filepath = os.path.join(OUT_DIR, a["name"])
     bpy.ops.render.render(write_still=True)

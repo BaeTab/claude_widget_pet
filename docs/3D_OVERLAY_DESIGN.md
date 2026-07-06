@@ -100,10 +100,16 @@ Godot는 **C#(.NET)** 도 지원하므로 IPC/로직을 팀 스택(C#)과 통일
 
 ---
 
-## 4. IPC 프로토콜 — stdin/stdout JSON(라인 구분)
+## 4. IPC 프로토콜 — 라인 구분 JSON
 
-WPF가 Godot exe를 **자식 프로세스로 실행**하고, 표준입출력으로 줄 단위 JSON을 주고받는다.
-(포트 불필요·방화벽/AV 마찰 적음·구현 단순. 나중에 named pipe로 승격 가능.)
+WPF가 Godot exe를 **자식 프로세스로 실행**하고, 줄 단위 JSON을 주고받는다.
+
+> **전송 방식(Phase 1 확정): 로컬호스트 TCP.** 초안은 stdin/stdout이었으나, Godot 4.7은
+> *창을 띄우는* 프로세스에서 논블로킹 stdin 읽기를 지원하지 않는다(`OS.read_string_from_stdin()`가
+> 프레임 루프를 블록). 그래서 WPF가 `127.0.0.1`의 OS 할당 임시 포트로 `TcpListener`를 열고, 그 포트를
+> Godot에 `--ipc-port=<port>` 유저 인자로 넘긴다(엔진이 `StreamPeerTCP`로 역접속). 루프백 전용이라
+> 방화벽/AV 마찰이 사실상 없고, 호스트가 먼저 listen한 뒤 spawn하므로 순서 경쟁도 없다. 나중에 named
+> pipe로 승격 가능. (구현: WPF `Services/PetOverlayService.cs`, Godot `godot_overlay/main.gd`.)
 
 **WPF → 엔진 (명령)**
 ```jsonc

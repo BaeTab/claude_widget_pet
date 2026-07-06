@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone IPC round-trip self-test. NOT part of Claude_Widget.sln, so a normal
+    build of the shipped app never touches it. It compiles the REAL
+    PetOverlayService.cs (linked, single source of truth) into a plain console exe so
+    stdout PASS/FAIL is captured on a locked/remote desktop. See README/report for how
+    to run it (dotnet run against the Godot console exe + the godot_overlay dir).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>IpcSelfTest</AssemblyName>
+    <RootNamespace>IpcSelfTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Claude_Widget\Services\PetOverlayService.cs" Link="PetOverlayService.cs" />
+  </ItemGroup>
+
+</Project>

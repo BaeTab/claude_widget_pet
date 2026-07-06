@@ -24,6 +24,13 @@ namespace Claude_Widget.Services
         /// <summary>Show per-tool activity (badge + label) from PreToolUse hooks.</summary>
         public bool ToolAwareness { get; set; } = true;
 
+        /// <summary>
+        /// Experimental (Phase 1): render the character as a Godot 3D overlay process
+        /// instead of / alongside the 2D vector pet. DEFAULT false — when off, no engine
+        /// process is spawned and behavior is byte-for-byte the shipped 2D widget.
+        /// </summary>
+        public bool Enable3DOverlay { get; set; } = false;
+
         // --- Usage stats ---
         /// <summary>Date (yyyy-MM-dd) the WorkSecondsToday counter belongs to.</summary>
         public string StatsDate { get; set; } = "";
